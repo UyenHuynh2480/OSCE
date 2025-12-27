@@ -3,7 +3,6 @@
 
 import * as React from "react";
 import { useMemo, useState, useRef, useEffect } from "react";
-import * as XLSX from "xlsx";
 import Papa from "papaparse";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -127,29 +126,38 @@ export default function UploadStudents() {
     if (e.target.files?.length) setFiles(Array.from(e.target.files));
   };
 
-  const downloadTemplate = () => {
-    const sample = [
-      {
-        student_code: "SV001",
-        last_name: "Nguyễn Văn",
-        name: "An",
-        birth_year: 2001,
-        gender: "Nam",
-        level_name: "Y4",
-        year: 2025,
-        group_number: 1,
-        batch_number: 1,
-      },
+  /** 📥 Tải CSV Template (an toàn, nhẹ) */
+  const downloadTemplateCSV = () => {
+    const header = [
+      "student_code",
+      "last_name",
+      "name",
+      "birth_year",
+      "gender",
+      "level_name",
+      "year",
+      "group_number",
+      "batch_number",
     ];
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(sample);
-    XLSX.utils.book_append_sheet(wb, ws, "Template");
-    const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-    const blob = new Blob([wbout], { type: "application/octet-stream" });
+    const sample = [
+      [
+        "SV001",
+        "Nguyễn Văn",
+        "An",
+        "2001",
+        "Nam",
+        "Y4",
+        "2025",
+        "1",
+        "1",
+      ],
+    ];
+    const csv = [header.join(","), ...sample.map((r) => r.join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "student_template.xlsx";
+    a.download = "student_template.csv";
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -159,10 +167,93 @@ export default function UploadStudents() {
       Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
+        transformHeader: (h) => String(h).trim(),
         complete: (results) => resolve(results.data as any[]),
         error: reject,
       });
     });
+
+  /** 🧪 Validate client-side cho CSV & cho các chỉnh sửa */
+  const validateRowsClient = async (rows: RawRow[]) => {
+    const [{ data: levels }, { data: cohorts }] = await Promise.all([
+      supabase.from("levels").select("*"),
+      supabase.from("cohorts").select("*"),
+    ]);
+
+    const levelMap = new Map((levels as any[]).map((l: any) => [String(l.name).trim(), l.id]));
+    const cohortMap = new Map((cohorts as any[]).map((c: any) => [`${c.year}-${c.level_id}`, c.id]));
+
+    const requiredFields = [
+      "student_code",
+      "last_name",
+      "name",
+      "birth_year",
+      "gender",
+      "level_name",
+      "year",
+      "group_number",
+      "batch_number",
+    ];
+
+    const newPreview: RawRow[] = [];
+    const newErrors: ErrorItem[] = [];
+
+    rows.forEach((row, idx) => {
+      const line = Number(row.__line ?? row.id ?? idx + 2); // Excel header ở dòng 1
+      const levelName = String(row.level_name ?? "").trim();
+      const levelId = levelMap.get(levelName);
+
+      const dataRow: RawRow = {
+        ...row,
+        id: line,
+        __line: line,
+        student_code: String(row.student_code ?? "").trim(),
+        last_name: String(row.last_name ?? "").trim(),
+        name: String(row.name ?? "").trim(),
+        birth_year: Number(row.birth_year ?? 0),
+        gender: String(row.gender ?? "").trim(),
+        level_name: levelName,
+        year: Number(row.year ?? 0),
+        group_number: Number(row.group_number ?? 0),
+        batch_number: Number(row.batch_number ?? 0),
+      };
+
+      // Required
+      requiredFields.forEach((f) => {
+        const v = dataRow[f];
+        if (v == null || (typeof v === "string" && v.trim() === "") || v === 0) {
+          newErrors.push({ row: line, column: f, message: "Thiếu dữ liệu" });
+        }
+      });
+
+      // Constraints
+      if (dataRow.birth_year && (dataRow.birth_year < 1980 || dataRow.birth_year > 2010)) {
+        newErrors.push({ row: line, column: "birth_year", message: "birth_year ngoài phạm vi 1980-2010" });
+      }
+      if (dataRow.gender && !["Nam", "Nữ"].includes(dataRow.gender)) {
+        newErrors.push({ row: line, column: "gender", message: "Giới tính phải Nam/Nữ" });
+      }
+      if (dataRow.group_number && dataRow.group_number <= 0) {
+        newErrors.push({ row: line, column: "group_number", message: "group_number phải > 0" });
+      }
+      if (dataRow.batch_number && dataRow.batch_number <= 0) {
+        newErrors.push({ row: line, column: "batch_number", message: "batch_number phải > 0" });
+      }
+
+      // Level/Cohort tồn tại
+      if (dataRow.level_name && !levelId) {
+        newErrors.push({ row: line, column: "level_name", message: "Level không tồn tại" });
+      }
+      const cohortKey = `${dataRow.year}-${levelId}`;
+      if (dataRow.level_name && dataRow.year && !cohortMap.get(cohortKey)) {
+        newErrors.push({ row: line, column: "year", message: "Cohort không hợp lệ" });
+      }
+
+      newPreview.push(dataRow);
+    });
+
+    return { rows: newPreview, errors: newErrors };
+  };
 
   const handleParseFiles = async () => {
     if (files.length === 0) {
@@ -170,111 +261,50 @@ export default function UploadStudents() {
       return;
     }
     setLoading(true);
-    setStatus("⏳ Đang đọc & validate file...");
+    setStatus("⏳ Đang đọc & validate...");
+
     const allRows: RawRow[] = [];
+    const allErrors: ErrorItem[] = [];
+
     try {
       for (const file of files) {
         const name = file.name.toLowerCase();
         if (name.endsWith(".csv")) {
-          allRows.push(...(await parseCSV(file)));
+          // CSV: parse client + validate client
+          const csvRows = await parseCSV(file);
+          const { rows, errors } = await validateRowsClient(csvRows);
+          allRows.push(...rows);
+          allErrors.push(...errors);
         } else {
-          const buf = await file.arrayBuffer();
-          const wb = XLSX.read(buf, { type: "array" });
-          const sheet = wb.SheetNames[0];
-          const json: RawRow[] = XLSX.utils.sheet_to_json(wb.Sheets[sheet], { defval: null });
-          allRows.push(...json);
+          // Excel: gửi lên server để parse & validate
+          const form = new FormData();
+          form.append("file", file);
+
+          const res = await fetch("/api/upload-students", { method: "POST", body: form });
+          const data = await res.json();
+          if (!res.ok) {
+            setStatus(`❌ Lỗi parse Excel: ${data.error ?? "unknown"}`);
+            setLoading(false);
+            return;
+          }
+          allRows.push(...(data.rows ?? []));
+          allErrors.push(...(data.errors ?? []));
         }
       }
+
       if (!allRows.length) {
         setStatus("❌ Không có dữ liệu");
         setLoading(false);
         return;
       }
 
-      const [{ data: levels }, { data: cohorts }] = await Promise.all([
-        supabase.from("levels").select("*"),
-        supabase.from("cohorts").select("*"),
-      ]);
-      if (!levels || !cohorts) {
-        setStatus("❌ Không lấy được Levels/Cohorts");
-        setLoading(false);
-        return;
-      }
-
-      const levelMap = new Map((levels as any[]).map((l: any) => [String(l.name).trim(), l.id]));
-      const cohortMap = new Map((cohorts as any[]).map((c: any) => [`${c.year}-${c.level_id}`, c.id]));
-
-      const requiredFields = [
-        "student_code",
-        "last_name",
-        "name",
-        "birth_year",
-        "gender",
-        "level_name",
-        "year",
-        "group_number",
-        "batch_number",
-      ];
-
-      const newPreview: RawRow[] = [];
-      const newErrors: ErrorItem[] = [];
-
-      allRows.forEach((row, idx) => {
-        const line = idx + 2; // dòng Excel (header ở dòng 1)
-        const dataRow: RawRow = { ...row, id: line, __line: line };
-
-        // Required
-        requiredFields.forEach((f) => {
-          if (row[f] == null || String(row[f]).trim() === "") {
-            newErrors.push({ row: line, column: f, message: "Thiếu dữ liệu" });
-          }
-        });
-
-        // Map Level/Cohort
-        const levelName = String(row.level_name ?? "").trim();
-        if (levelName && !levelMap.get(levelName)) {
-          newErrors.push({ row: line, column: "level_name", message: "Level không tồn tại" });
-        }
-        const cohortKey = `${row.year}-${levelMap.get(levelName)}`;
-        if (levelName && row.year && !cohortMap.get(cohortKey)) {
-          newErrors.push({ row: line, column: "year", message: "Cohort không hợp lệ" });
-        }
-
-        // Constraints theo DB
-        if (row.birth_year && (Number(row.birth_year) < 1980 || Number(row.birth_year) > 2010)) {
-          newErrors.push({ row: line, column: "birth_year", message: "birth_year ngoài phạm vi 1980-2010" });
-        }
-        if (row.gender && !["Nam", "Nữ"].includes(String(row.gender).trim())) {
-          newErrors.push({ row: line, column: "gender", message: "Giới tính phải Nam/Nữ" });
-        }
-        if (row.group_number && Number(row.group_number) <= 0) {
-          newErrors.push({ row: line, column: "group_number", message: "group_number phải > 0" });
-        }
-        if (row.batch_number && Number(row.batch_number) <= 0) {
-          newErrors.push({ row: line, column: "batch_number", message: "batch_number phải > 0" });
-        }
-
-        // Chuẩn hóa hiển thị
-        dataRow.student_code = String(row.student_code ?? "").trim();
-        dataRow.last_name = String(row.last_name ?? "").trim();
-        dataRow.name = String(row.name ?? "").trim();
-        dataRow.birth_year = Number(row.birth_year ?? 0);
-        dataRow.gender = String(row.gender ?? "").trim();
-        dataRow.level_name = levelName;
-        dataRow.year = Number(row.year ?? 0);
-        dataRow.group_number = Number(row.group_number ?? 0);
-        dataRow.batch_number = Number(row.batch_number ?? 0);
-
-        newPreview.push(dataRow);
-      });
-
-      setPreviewData(newPreview);
-      setErrors(newErrors);
-      setReadyToUpload(newErrors.length === 0);
-      setStatus(`✅ Validate xong. Dòng lỗi: ${newErrors.length}`);
+      setPreviewData(allRows);
+      setErrors(allErrors);
+      setReadyToUpload(allErrors.length === 0);
+      setStatus(`✅ Validate xong. Dòng lỗi: ${allErrors.length}`);
     } catch (err) {
       console.error(err);
-      setStatus("❌ Lỗi đọc file / kết nối Supabase");
+      setStatus("❌ Lỗi đọc file / kết nối API");
     } finally {
       setLoading(false);
     }
@@ -291,28 +321,22 @@ export default function UploadStudents() {
     return newRow;
   };
 
-  const handleRevalidate = () => {
+  const handleRevalidate = async () => {
     if (!previewData.length) return;
-    const newErrors: ErrorItem[] = [];
-    previewData.forEach((row) => {
-      const line = row.__line ?? row.id ?? 0;
-      if (!row.student_code) newErrors.push({ row: line, column: "student_code", message: "Thiếu dữ liệu" });
-      if (!row.last_name) newErrors.push({ row: line, column: "last_name", message: "Thiếu dữ liệu" });
-      if (!row.name) newErrors.push({ row: line, column: "name", message: "Thiếu dữ liệu" });
-      if (!row.birth_year || row.birth_year < 1980 || row.birth_year > 2010)
-        newErrors.push({ row: line, column: "birth_year", message: "birth_year ngoài phạm vi 1980-2010" });
-      if (!["Nam", "Nữ"].includes(row.gender))
-        newErrors.push({ row: line, column: "gender", message: "Giới tính phải Nam/Nữ" });
-      if (!row.level_name) newErrors.push({ row: line, column: "level_name", message: "Thiếu dữ liệu" });
-      if (!row.year) newErrors.push({ row: line, column: "year", message: "Thiếu dữ liệu" });
-      if (!row.group_number || row.group_number <= 0)
-        newErrors.push({ row: line, column: "group_number", message: "group_number phải > 0" });
-      if (!row.batch_number || row.batch_number <= 0)
-        newErrors.push({ row: line, column: "batch_number", message: "batch_number phải > 0" });
-    });
-    setErrors(newErrors);
-    setReadyToUpload(newErrors.length === 0);
-    setStatus(`🔍 Re-validate xong. Dòng lỗi: ${newErrors.length}`);
+    setLoading(true);
+    setStatus("🔍 Đang kiểm tra lại lỗi...");
+    try {
+      const { rows, errors } = await validateRowsClient(previewData);
+      setPreviewData(rows);
+      setErrors(errors);
+      setReadyToUpload(errors.length === 0);
+      setStatus(`🔍 Re-validate xong. Dòng lỗi: ${errors.length}`);
+    } catch (err) {
+      console.error(err);
+      setStatus("❌ Lỗi khi re-validate");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleConfirmUpload = async () => {
@@ -321,41 +345,22 @@ export default function UploadStudents() {
       return;
     }
     setLoading(true);
-    setStatus("⏳ Upload lên Supabase...");
+    setStatus("⏳ Upload lên Supabase (server)...");
+
     try {
-      const [{ data: levels }, { data: cohorts }] = await Promise.all([
-        supabase.from("levels").select("*"),
-        supabase.from("cohorts").select("*"),
-      ]);
-      const levelMap = new Map((levels as any[]).map((l: any) => [String(l.name).trim(), l.id]));
-      const cohortMap = new Map((cohorts as any[]).map((c: any) => [`${c.year}-${c.level_id}`, c.id]));
-
-      const dbInserts = previewData.map((r) => ({
-        student_code: r.student_code,
-        last_name: r.last_name,
-        name: r.name,
-        birth_year: r.birth_year,
-        gender: r.gender,
-        level_id: levelMap.get(r.level_name),
-        cohort_id: cohortMap.get(`${r.year}-${levelMap.get(r.level_name)}`),
-        group_number: r.group_number,
-        batch_number: r.batch_number,
-      }));
-
-      const CHUNK_SIZE = 500;
-      for (let i = 0; i < dbInserts.length; i += CHUNK_SIZE) {
-        const chunk = dbInserts.slice(i, i + CHUNK_SIZE);
-        const { error } = await supabase
-          .from("students")
-          .upsert(chunk, { onConflict: "student_code" }); // Upsert theo student_code
-        if (error) {
-          setStatus(`❌ Lỗi upload chunk ${i / CHUNK_SIZE + 1}: ${error.message}`);
-          setLoading(false);
-          return;
-        }
+      const res = await fetch("/api/upload-students/commit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: previewData }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus(`❌ Lỗi commit: ${data.error ?? "unknown"}`);
+        setLoading(false);
+        return;
       }
 
-      setStatus(`🎉 Upload thành công ${dbInserts.length} sinh viên`);
+      setStatus(`🎉 Upload thành công ${data.count} sinh viên`);
       setReadyToUpload(false);
       setFiles([]);
       setPreviewData([]);
@@ -367,6 +372,8 @@ export default function UploadStudents() {
       try {
         window.scrollTo({ top: 0, behavior: "smooth" });
       } catch {}
+      // Làm mới danh sách đã upload
+      await loadStudents();
     } catch (err) {
       console.error(err);
       setStatus("❌ Lỗi upload dữ liệu");
@@ -624,7 +631,7 @@ export default function UploadStudents() {
     }
   };
 
-  // ===== Columns cho danh sách đã upload (đẹp & cân đối) =====
+  // ===== Columns cho danh sách đã upload =====
   const listColumns: GridColDef[] = useMemo(
     () => [
       { field: "student_code", headerName: "Mã SV", width: 105, sortable: true },
@@ -710,8 +717,8 @@ export default function UploadStudents() {
               <Button variant="outlined" color="primary" onClick={goBackDashboard}>
                 ← Quay lại Dashboard
               </Button>
-              <Button variant="outlined" color="primary" onClick={downloadTemplate}>
-                📥 Tải Excel Template
+              <Button variant="outlined" color="primary" onClick={downloadTemplateCSV}>
+                📥 Tải CSV Template
               </Button>
               <Button
                 variant="contained"
