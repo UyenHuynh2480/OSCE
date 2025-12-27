@@ -1,9 +1,8 @@
 
 "use client";
-
 import * as React from "react";
 import { useMemo, useState, useRef, useEffect } from "react";
-import Papa from "papaparse";
+import Papa, { ParseResult } from "papaparse";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -86,7 +85,6 @@ type Student = {
   group_number: number;
   batch_number: number;
 };
-
 type Level = { id: string; name: string };
 type Cohort = { id: string; year: number; level_id: string };
 type StudentView = Student & { level_name?: string; cohort_year?: number };
@@ -96,7 +94,6 @@ const collator = new Intl.Collator("vi", { sensitivity: "base", usage: "sort" })
 
 export default function UploadStudents() {
   const router = useRouter();
-
   const [files, setFiles] = useState<File[]>([]);
   const [status, setStatus] = useState<string>("");
   const [previewData, setPreviewData] = useState<RawRow[]>([]);
@@ -152,7 +149,7 @@ export default function UploadStudents() {
         "1",
       ],
     ];
-    const csv = [header.join(","), ...sample.map((r) => r.join(","))].join("\n");
+    const csv = [header.join(","), ...sample.map(r => r.join(","))].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -167,8 +164,8 @@ export default function UploadStudents() {
       Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
-        transformHeader: (h) => String(h).trim(),
-        complete: (results) => resolve(results.data as any[]),
+        transformHeader: (h: string) => String(h).trim(),
+        complete: (results: ParseResult<any>) => resolve(results.data as any[]),
         error: reject,
       });
     });
@@ -262,7 +259,6 @@ export default function UploadStudents() {
     }
     setLoading(true);
     setStatus("⏳ Đang đọc & validate...");
-
     const allRows: RawRow[] = [];
     const allErrors: ErrorItem[] = [];
 
@@ -279,7 +275,6 @@ export default function UploadStudents() {
           // Excel: gửi lên server để parse & validate
           const form = new FormData();
           form.append("file", file);
-
           const res = await fetch("/api/upload-students", { method: "POST", body: form });
           const data = await res.json();
           if (!res.ok) {
@@ -346,7 +341,6 @@ export default function UploadStudents() {
     }
     setLoading(true);
     setStatus("⏳ Upload lên Supabase (server)...");
-
     try {
       const res = await fetch("/api/upload-students/commit", {
         method: "POST",
@@ -359,7 +353,6 @@ export default function UploadStudents() {
         setLoading(false);
         return;
       }
-
       setStatus(`🎉 Upload thành công ${data.count} sinh viên`);
       setReadyToUpload(false);
       setFiles([]);
@@ -408,8 +401,8 @@ export default function UploadStudents() {
   );
 
   /** ==========================
-   *  Danh sách đã upload — List View
-   *  ========================== */
+   * Danh sách đã upload — List View
+   * ========================== */
   const [levels, setLevels] = useState<Level[]>([]);
   const [cohorts, setCohorts] = useState<Cohort[]>([]);
   const [students, setStudents] = useState<StudentView[]>([]);
@@ -431,7 +424,6 @@ export default function UploadStudents() {
           supabase.from("levels").select("*"),
           supabase.from("cohorts").select("*"),
         ]);
-
       if (levelErr || cohortErr) {
         setStudentsStatus(`❌ Lỗi tải Levels/Cohorts: ${levelErr?.message ?? ""} ${cohortErr?.message ?? ""}`);
         setStudentsLoading(false);
@@ -441,7 +433,7 @@ export default function UploadStudents() {
       const { data: studentRes, error: studentErr } = await supabase
         .from("students")
         .select("*")
-        .limit(5000); // tùy nhu cầu
+        .limit(5000); // tuỳ nhu cầu
 
       if (studentErr) {
         setStudentsStatus(`❌ Lỗi tải Students: ${studentErr.message}`);
@@ -481,14 +473,17 @@ export default function UploadStudents() {
     () => Array.from(new Set(students.map((s) => s.level_name).filter(Boolean))).sort((a, b) => collator.compare(a!, b!)),
     [students]
   );
+
   const yearOptions = useMemo(
     () => Array.from(new Set(students.map((s) => s.cohort_year).filter((y): y is number => typeof y === "number"))).sort(),
     [students]
   );
+
   const groupOptions = useMemo(
     () => Array.from(new Set(students.map((s) => s.group_number).filter((n): n is number => typeof n === "number"))).sort((a, b) => a - b),
     [students]
   );
+
   const batchOptions = useMemo(
     () => Array.from(new Set(students.map((s) => s.batch_number).filter((n): n is number => typeof n === "number"))).sort((a, b) => a - b),
     [students]
@@ -578,8 +573,8 @@ export default function UploadStudents() {
           name: f.name,
           birth_year: f.birth_year,
           gender: f.gender,
-          level_id: level_id,
-          cohort_id: cohort_id,
+          level_id,
+          cohort_id,
           group_number: f.group_number,
           batch_number: f.batch_number,
         })
@@ -712,7 +707,6 @@ export default function UploadStudents() {
             <Typography variant="h5" fontWeight={700} color="primary">
               📥 Upload Danh sách Sinh viên
             </Typography>
-
             <Stack direction="row" spacing={1}>
               <Button variant="outlined" color="primary" onClick={goBackDashboard}>
                 ← Quay lại Dashboard
@@ -726,7 +720,7 @@ export default function UploadStudents() {
                 onClick={handleParseFiles}
                 disabled={files.length === 0}
               >
-                🔎 Xem trước &amp; Validate
+                🔎 Xem trước & Validate
               </Button>
             </Stack>
           </Stack>
@@ -757,6 +751,7 @@ export default function UploadStudents() {
                   ))}
                 </Stack>
               </Stack>
+
               {loading && <LinearProgress sx={{ mt: 2 }} color="primary" />}
             </CardContent>
           </Card>
@@ -800,7 +795,6 @@ export default function UploadStudents() {
                         color={readyToUpload ? "success" : "default"}
                       />
                     </Stack>
-
                     <Stack direction="row" spacing={1}>
                       <Button variant="outlined" color="primary" onClick={handleRevalidate}>
                         🔁 Check lại lỗi
@@ -856,7 +850,6 @@ export default function UploadStudents() {
                   <Typography variant="h6" sx={{ mb: 1 }} color="primary">
                     Lỗi chi tiết (Validation details)
                   </Typography>
-
                   {errors.length ? (
                     <Box
                       sx={{
@@ -895,8 +888,8 @@ export default function UploadStudents() {
           )}
 
           {/* =========================
-              Danh sách sinh viên đã upload
-              ========================= */}
+          Danh sách sinh viên đã upload
+          ========================= */}
           <Card sx={{ mt: 3, border: "1px solid", borderColor: "#bae6fd" }}>
             <CardContent>
               <Stack
@@ -909,7 +902,6 @@ export default function UploadStudents() {
                 <Typography variant="h6" fontWeight={700} color="primary">
                   📚 Danh sách sinh viên đã upload
                 </Typography>
-
                 <Stack direction="row" spacing={1} flexWrap="wrap">
                   <Button variant="outlined" color="primary" onClick={loadStudents} disabled={studentsLoading}>
                     🔄 Làm mới
@@ -1080,6 +1072,7 @@ export default function UploadStudents() {
                     }))
                   }
                 />
+
                 <FormControl size="small">
                   <InputLabel id="gender-edit-label">Giới tính</InputLabel>
                   <Select
@@ -1126,7 +1119,10 @@ export default function UploadStudents() {
                     onChange={(e) =>
                       setEditForm((prev) => ({
                         ...prev,
-                        cohort_year: e.target.value === "" ? undefined : Number(e.target.value),
+                        cohort_year:
+                          e.target.value === ""
+                            ? undefined
+                            : Number(e.target.value),
                       }))
                     }
                   >

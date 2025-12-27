@@ -2,7 +2,7 @@
 // app/grading/run/page.tsx
 "use client";
 
-import { useEffect, useMemo, useState, useRef } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -33,7 +33,8 @@ interface ExamSession {
   exam_round_id: UUID;
   student_id: UUID;
   chain_id: UUID | null;
-  chains?: { name: string; color?: string | null };
+  // Ở DB có thể là object hoặc array; để an toàn, ta cho phép []:
+  chains?: { name: string; color?: string | null }[] | { name: string; color?: string | null };
   students?: StudentBrief;
 }
 interface FixedRubricItem {
@@ -51,11 +52,25 @@ const DEFAULT_GLOBAL_DESC: Record<GlobalRating, string> = {
   Excellent: "Xuất sắc, thuần thục, dự phòng tốt và giao tiếp rõ ràng.",
 };
 
-export default function GradingRunPage() {
+/** =========================
+ * Wrapper page: bọc Suspense
+ * ========================= */
+export default function Page() {
+  return (
+    <Suspense fallback={<div className="p-4">Đang tải…</div>}>
+      <GradingRunPage />
+    </Suspense>
+  );
+}
+
+/** =========================
+ * Component chính của trang
+ * ========================= */
+function GradingRunPage() {
   const params = useSearchParams();
   const router = useRouter();
 
-  // Lấy role để điều khiển nút Admin
+  // Lấy role để điều khiển nút Admin (tra theo profiles.user_id)
   const [role, setRole] = useState<string>("");
   useEffect(() => {
     (async () => {
@@ -72,17 +87,19 @@ export default function GradingRunPage() {
   }, []);
   const isAdmin = role === "admin";
 
+  // Query params
   const levelId = params.get("level_id") ?? "";
   const cohortId = params.get("cohort_id") ?? "";
   const examRoundId = params.get("exam_round_id") ?? "";
   const stationId = params.get("station_id") ?? "";
 
-  // Hỗ trợ chain_id / chain_ids
+  // Hỗ trợ chain_id (một chuỗi) và chain_ids ("id1,id2")
   const chainParamRaw =
     params.get("chain_id") ??
     params.get("chain_ids") ??
     "";
 
+  // Parse Chuỗi ra Set
   const chainIdSet = useMemo(() => {
     const s = new Set<string>();
     chainParamRaw.split(",").map(v => v.trim()).filter(Boolean).forEach(id => s.add(id));
@@ -123,7 +140,10 @@ export default function GradingRunPage() {
 
   // Toast
   const [toastMsg, setToastMsg] = useState<string>("");
-  const showToast = (msg: string, timeout=2500) => { setToastMsg(msg); window.setTimeout(()=>setToastMsg(""), timeout); };
+  const showToast = (msg: string, timeout = 2500) => {
+    setToastMsg(msg);
+    window.setTimeout(() => setToastMsg(""), timeout);
+  };
 
   // Panel regrade
   const [showRegradePanel, setShowRegradePanel] = useState(false);
@@ -145,8 +165,14 @@ export default function GradingRunPage() {
   useEffect(() => {
     const loadContext = async () => {
       const [{ data: roundData }, { data: stationData }] = await Promise.all([
-        supabase.from("exam_rounds_view").select("id, display_name, cohort_id, round_number, date, groups").eq("id", examRoundId).maybeSingle(),
-        supabase.from("stations").select("id, name").eq("id", stationId).maybeSingle(),
+        supabase.from("exam_rounds_view")
+          .select("id, display_name, cohort_id, round_number, date, groups")
+          .eq("id", examRoundId)
+          .maybeSingle(),
+        supabase.from("stations")
+          .select("id, name")
+          .eq("id", stationId)
+          .maybeSingle(),
       ]);
       setRoundInfo(roundData ?? null);
       setStation(stationData ?? null);
@@ -157,7 +183,10 @@ export default function GradingRunPage() {
   // ====== Tải danh sách giảng viên chấm
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from("graders").select("id, first_name, last_name, email").order("last_name", { ascending: true });
+      const { data } = await supabase
+        .from("graders")
+        .select("id, first_name, last_name, email")
+        .order("last_name", { ascending: true });
       setGraders(data ?? []);
     })();
   }, []);
@@ -168,11 +197,16 @@ export default function GradingRunPage() {
       setSelectedSessionId("");
       if (!examRoundId || !cohortId) { setSessions([]); return; }
       const [{ data: sess }, { data: studs }] = await Promise.all([
-        supabase.from("exam_sessions").select("id, exam_round_id, student_id, chain_id, chains(name,color)").eq("exam_round_id", examRoundId).order("student_id", { ascending: true }),
-        supabase.from("students").select("id, student_code, last_name, name, cohort_id, group_number").eq("cohort_id", cohortId),
+        supabase.from("exam_sessions")
+          .select("id, exam_round_id, student_id, chain_id, chains(name,color)")
+          .eq("exam_round_id", examRoundId)
+          .order("student_id", { ascending: true }),
+        supabase.from("students")
+          .select("id, student_code, last_name, name, cohort_id, group_number")
+          .eq("cohort_id", cohortId),
       ]);
-      const studsMap = new Map((studs ?? []).map(s => [s.id, s]));
-      const joined: ExamSession[] = (sess ?? []).map(s => {
+      const studsMap = new Map<string, any>((studs ?? []).map((s: any) => [s.id as string, s]));
+      const joined: ExamSession[] = (sess ?? []).map((s: any) => {
         const st = studsMap.get(s.student_id);
         return {
           ...s,
@@ -183,7 +217,7 @@ export default function GradingRunPage() {
             group_number: st.group_number ?? null,
           } : undefined,
         };
-      }).filter(s => !!s.students);
+      }).filter((s: any) => !!s.students);
       setSessions(joined);
     };
     loadSessions();
@@ -209,14 +243,14 @@ export default function GradingRunPage() {
         console.warn("list-graded API exception:", (e as any)?.message);
       }
 
-      // Fallback: lấy từ bảng scores/scores_view (đổi tên bảng cho đúng schema)
+      // Fallback: lấy từ view (nếu có)
       try {
         const { data, error } = await supabase
-          .from("scores_view") // ⬅️ đổi nếu bạn dùng bảng khác (scores)
+          .from("scores_view")
           .select("exam_session_id, station_id")
           .eq("station_id", stationId);
         if (error) throw error;
-        const set = new Set<string>((data ?? []).map(x => x.exam_session_id as string));
+        const set = new Set<string>((data ?? []).map((x: any) => x.exam_session_id as string));
         setGradedSet(set);
       } catch (e2) {
         console.warn("graded fallback lỗi:", (e2 as any)?.message);
@@ -239,7 +273,7 @@ export default function GradingRunPage() {
           .eq("station_id", stationId)
           .eq("status", "approved");
         if (error) throw error;
-        const set = new Set<string>((data ?? []).map(x => x.exam_session_id));
+        const set = new Set<string>((data ?? []).map((x: any) => x.exam_session_id));
         setUnlockedSet(set);
       } catch (e) {
         // Cách 2: API service role
@@ -274,8 +308,8 @@ export default function GradingRunPage() {
 
   const orderedFilteredSessions = useMemo(() => {
     const byCode = (a?: StudentBrief, b?: StudentBrief) => (a?.student_code ?? "").localeCompare(b?.student_code ?? "");
-    const notDone = [...filteredSessions].filter(s => !gradedSet.has(s.id)).sort((a,b)=>byCode(a.students,b.students));
-    const done = [...filteredSessions].filter(s => gradedSet.has(s.id)).sort((a,b)=>byCode(a.students,b.students));
+    const notDone = [...filteredSessions].filter(s => !gradedSet.has(s.id)).sort((a, b) => byCode(a.students, b.students));
+    const done = [...filteredSessions].filter(s => gradedSet.has(s.id)).sort((a, b) => byCode(a.students, b.students));
     return [...notDone, ...done];
   }, [filteredSessions, gradedSet]);
 
@@ -284,7 +318,7 @@ export default function GradingRunPage() {
     if (!orderedFilteredSessions.length) { setSelectedSessionId(""); return; }
     const exists = orderedFilteredSessions.some(s => s.id === selectedSessionId);
     if (!exists) setSelectedSessionId(orderedFilteredSessions[0].id);
-  }, [orderedFilteredSessions]);
+  }, [orderedFilteredSessions, selectedSessionId]);
 
   // ====== Load rubric
   useEffect(() => {
@@ -306,7 +340,7 @@ export default function GradingRunPage() {
     loadRubric();
   }, [stationId, cohortId, examRoundId, levelId]);
 
-  // ====== TÍNH ĐIỂM
+  // ====== TÍNH ĐIểm
   const rawTotal = useMemo(() => {
     if (!rubric) return 0;
     return rubric.items.reduce((acc: number, item: FixedRubricItem) => acc + (ratings[item.id] ?? 0), 0);
@@ -340,12 +374,18 @@ export default function GradingRunPage() {
 
   const currentChain = useMemo(() => {
     const s = orderedFilteredSessions.find(ss => ss.id === selectedSessionId);
-    const name = s?.chains?.name ?? "(chưa gán chuỗi)";
-    const color = s?.chains?.color ?? "#0ea5e9";
+    let chainFirst: { name?: string; color?: string | null } | undefined;
+    if (Array.isArray(s?.chains)) {
+      chainFirst = s?.chains[0];
+    } else {
+      chainFirst = (s as any)?.chains;
+    }
+    const name = chainFirst?.name ?? "(chưa gán chuỗi)";
+    const color = chainFirst?.color ?? "#0ea5e9";
     return { name, color };
   }, [orderedFilteredSessions, selectedSessionId]);
 
-  // ====== Selected score — dùng API get-score (thêm unlock ngay khi thấy allow_regrade=true)
+  // ====== Selected score — dùng API get-score
   useEffect(() => {
     const fetchSelected = async () => {
       if (!selectedSessionId || !stationId) { setSelectedExistingScore(null); return; }
@@ -358,7 +398,6 @@ export default function GradingRunPage() {
       if (!r.ok || !j.ok) { console.warn('get-score lỗi:', j.error || r.statusText); setSelectedExistingScore(null); return; }
       setSelectedExistingScore(j.score ?? null);
 
-      // Nếu SV đang chọn đã unlock → bỏ mờ ngay trong danh sách
       if (j.score?.allow_regrade === true) {
         setUnlockedSet(prev => {
           const next = new Set(prev);
@@ -387,7 +426,7 @@ export default function GradingRunPage() {
     loadPendingRegrade();
   }, [selectedSessionId, stationId]);
 
-  // ====== Poll unlock (approve từ Admin) — dùng API get-score
+  // ====== Poll unlock (approve từ Admin)
   useEffect(() => {
     const interval = setInterval(async () => {
       if (!selectedSessionId || !stationId) return;
@@ -476,16 +515,33 @@ export default function GradingRunPage() {
 
   const disableSave = !selectedSessionId || !graderId || isLocked;
 
-  // ====== Gửi yêu cầu regrade
+  // ====== Gửi yêu cầu regrade (requested_by = profiles.grader_id của user hiện tại) — theo Run_grading
   const requestRegrade = async () => {
     if (!selectedSessionId) { alert("Chưa chọn sinh viên."); return; }
     if (!graderId) { alert("Vui lòng chọn Giảng viên chấm."); return; }
     if (pendingRegrade?.id) { showToast("⏳ Đã có yêu cầu đang chờ admin."); return; }
 
+    // Map user hiện tại -> profiles.grader_id (requested_by là graders.id)
+    const { data: auth } = await supabase.auth.getUser();
+    const uid = auth.user?.id;
+    if (!uid) { alert("Không xác định được user. Vui lòng đăng nhập lại."); return; }
+
+    const { data: prof, error: profErr } = await supabase
+      .from("profiles")
+      .select("grader_id")
+      .eq("user_id", uid)
+      .maybeSingle();
+    if (profErr) { alert("Không lấy được profiles: " + profErr.message); return; }
+    const myGraderId = prof?.grader_id;
+    if (!myGraderId) {
+      alert("Tài khoản hiện tại chưa được gắn grader_id. Vui lòng nhờ admin map tài khoản với danh mục Graders.");
+      return;
+    }
+
     const { error } = await supabase.from("regrade_requests").insert({
       exam_session_id: selectedSessionId,
       station_id: stationId,
-      requested_by: graderId,
+      requested_by: myGraderId,     // đúng schema: graders.id
       reason: regradeReason || null,
     });
     if (error) { alert("Gửi yêu cầu thất bại: " + error.message); return; }
@@ -513,6 +569,13 @@ export default function GradingRunPage() {
     const selectedSession = sessions.find(s => s.id === selectedSessionId);
     const studentId = selectedSession?.student_id;
     if (!studentId) { alert("Không lấy được student_id."); return; }
+
+    // Nếu đang khóa (SV đã có điểm) => mở panel yêu cầu chấm lại
+    if (selectedExistingScore && !selectedExistingScore.allow_regrade) {
+      setShowRegradePanel(true);
+      showToast("🔒 Sinh viên này đã có điểm. Vui lòng gửi yêu cầu chấm lại.");
+      return;
+    }
 
     if (!window.confirm("Xác nhận lưu điểm chấm cho sinh viên này?")) return;
 
@@ -548,24 +611,58 @@ export default function GradingRunPage() {
     setPendingRegrade(null);
     setShowRegradePanel(false);
     setRegradeReason("");
-    setRatings({});
-    setGlobalRating("");
-    setComment("");
+    setRatings({}); setGlobalRating(""); setComment("");
   };
 
-  /** ✅ Exit: thoát ra ngoài hẳn (sign out + về login) */
-  const exitImmediately = async () => {
-    try {
-      await supabase.auth.signOut();
-    } catch (e) {
-      // ignore lỗi signOut
-    } finally {
-      router.push("/login");
+  /** ⎋ Save & Exit — lưu (nếu cần) rồi về trang setup (/grading) */
+  const saveAndExit = async () => {
+    if (!rubric) { alert("Chưa có Rubric cho ngữ cảnh này."); router.push("/grading"); return; }
+    if (!graderId) { alert("Vui lòng chọn Giảng viên chấm trước khi thoát."); router.push("/grading"); return; }
+
+    if (selectedSessionId) {
+      const selectedSession = sessions.find(s => s.id === selectedSessionId);
+      const studentId = selectedSession?.student_id;
+      if (!studentId) { alert("Không lấy được student_id."); router.push("/grading"); return; }
+
+      if (selectedExistingScore && !selectedExistingScore.allow_regrade) {
+        // SV này đang khóa (chưa được regrade) → không lưu nữa, thoát luôn
+        router.push("/grading");
+        return;
+      }
+
+      const payloadBase = {
+        exam_session_id: selectedSessionId, station_id: stationId,
+        level_id: levelId, cohort_id: cohortId, exam_round_id: examRoundId,
+        student_id: studentId, grader_id: graderId,
+        item_scores: ratings, total_score: scaledTotal, comment,
+        global_rating: (globalRating || suggestGlobal(scaledTotal)) as GlobalRating,
+      };
+
+      try {
+        const r = await fetch('/api/grading/save-score', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payloadBase),
+        });
+        const j = await r.json();
+        if (!r.ok || !j.ok) {
+          console.warn("Lưu trước khi thoát lỗi:", j.error || r.statusText);
+        } else {
+          setGradedSet(prev => new Set(prev).add(selectedSessionId));
+          showToast("✅ Đã lưu & Thoát");
+        }
+      } catch (e) {
+        console.warn("Save & Exit exception:", (e as any)?.message);
+      }
     }
+
+    router.push("/grading");
   };
 
+  /** ===== UI ===== */
   return (
     <div className="page">
+      {/* Header */}
       <header className="header">
         <div className="title"><strong>Chấm thi / Grading</strong></div>
         <div className="context">
@@ -584,25 +681,33 @@ export default function GradingRunPage() {
         </div>
 
         <div className="headerActions">
+          {/* Chỉ hiện nếu role = admin */}
           {isAdmin && (
-            <button className="btnAdmin" onClick={() => router.push(ADMIN_DASHBOARD_PATH)} title="Quay về Admin Dashboard">
+            <button
+              className="btnAdmin"
+              onClick={() => router.push(ADMIN_DASHBOARD_PATH)}
+              title="Quay về Admin Dashboard"
+            >
               ⬅️ Admin Dashboard
             </button>
           )}
-          {/* Exit: đăng xuất và về login */}
-          <button
-            className="btnExit"
-            onClick={exitImmediately}
-            title="Thoát ra ngoài (đăng xuất)"
-          >
-            ⎋ Exit
-          </button>
+
+          {allGraded && (
+            <button
+              className="btnExit"
+              onClick={saveAndExit}
+              title="Đã chấm xong chuỗi — Lưu tự động & Thoát về trang thiết lập"
+            >
+              ⎋ Exit
+            </button>
+          )}
         </div>
       </header>
 
       <main className="grid">
-        {/* LEFT */}
+        {/* LEFT: Giảng viên chấm ở đầu tiên + bộ lọc + danh sách SV */}
         <aside className="leftPane card">
+          {/* Giảng viên chấm — đưa lên đầu */}
           <div className="graderRow">
             <label className="label blueText">Giảng viên chấm / Grader</label>
             <select className="select" value={graderId} onChange={(e) => setGraderId(e.target.value)}>
@@ -613,17 +718,30 @@ export default function GradingRunPage() {
             </select>
           </div>
 
+          {/* Bộ lọc */}
           <div className="filters">
             <label className="label blueText">Tổ (Group)</label>
-            <select className="select" value={groupFilter} onChange={(e)=>setGroupFilter(e.target.value)} title="Lọc theo Tổ (Group number)">
+            <select
+              className="select"
+              value={groupFilter}
+              onChange={(e)=>setGroupFilter(e.target.value)}
+              title="Lọc theo Tổ (Group number)"
+            >
               <option value="">-- Tất cả --</option>
               {groupOptions.map(g => <option key={g} value={String(g)}>{g}</option>)}
             </select>
 
             <label className="label blueText">Tìm SV (Họ/Tên/Mã)</label>
-            <input type="text" value={keyword} onChange={e=>setKeyword(e.target.value)} placeholder="VD: Nguyen / A123 / Võ An…" className="input" />
+            <input
+              type="text"
+              value={keyword}
+              onChange={e=>setKeyword(e.target.value)}
+              placeholder="VD: Nguyen / A123 / Võ An…"
+              className="input"
+            />
           </div>
 
+          {/* Danh sách SV */}
           <div className="studentList">
             {orderedFilteredSessions.map((s) => {
               const label = s.students
@@ -631,22 +749,12 @@ export default function GradingRunPage() {
                 : s.id;
               const selected = selectedSessionId === s.id;
               const graded = gradedSet.has(s.id);
-              // Đã chấm & chưa unlock ⇒ mờ
-              const faded = graded && !unlockedSet.has(s.id);
-              // Đã chấm & đã unlock ⇒ đậm lại
-              const isUnlocked = graded && unlockedSet.has(s.id);
-
               return (
                 <button
                   key={s.id}
                   onClick={() => setSelectedSessionId(s.id)}
-                  className={[
-                    "studentItem",
-                    selected ? "selected" : "",
-                    faded ? "graded" : "",
-                    isUnlocked ? "unlocked" : "",
-                  ].join(" ").trim()}
-                  title={graded ? (faded ? "Đã chấm (đang khóa)" : "Được chấp nhận chấm lại — không khóa") : "Chọn sinh viên để chấm"}
+                  className={`studentItem ${selected ? "selected" : ""} ${graded ? "graded" : ""}`}
+                  title={graded ? "Đã chấm" : "Chọn sinh viên để chấm"}
                 >
                   {graded && <span className="check">✓</span>}
                   {label}
@@ -659,7 +767,7 @@ export default function GradingRunPage() {
           </div>
         </aside>
 
-        {/* RIGHT */}
+        {/* RIGHT: Score header + Rubric */}
         <section className="rightPane">
           {/* SCORE HEADER */}
           <div className="scoreHeader card">
@@ -682,48 +790,63 @@ export default function GradingRunPage() {
                 <div className="studentName muted">Chưa chọn sinh viên</div>
               )}
             </div>
-
             <div className="scoreRight">
               <button
                 className="btnSaveYellow"
                 onClick={saveScore}
                 disabled={disableSave}
-                title={!selectedSessionId ? "Chọn sinh viên ở panel trái trước" : !graderId ? "Chọn Giảng viên chấm trước" : isLocked ? "SV đã có điểm — cần admin chấp nhận regrade" : "Lưu điểm"}
+                title={
+                  !selectedSessionId
+                    ? "Chọn sinh viên ở panel trái trước"
+                    : !graderId
+                      ? "Chọn Giảng viên chấm trước"
+                      : isLocked
+                        ? "SV đã có điểm — cần admin duyệt regrade"
+                        : "Lưu điểm"
+                }
               >
                 <span className="saveText">Lưu điểm</span>
               </button>
 
-              {/* Nút mở panel đề nghị / trạng thái chờ admin */}
-              {isLocked && !showRegradePanel && (
-                pendingRegrade?.id ? (
-                  <button className="btnGhost" disabled title={`Đã gửi lúc ${new Date(pendingRegrade.inserted_at).toLocaleString()}`} style={{ marginLeft: 6, opacity: .85 }}>
-                    ⏳ Chờ admin chấp nhận
-                  </button>
-                ) : (
-                  <button onClick={() => setShowRegradePanel(true)} className="btnGhost" title="Bản điểm đang khóa — bấm để đề nghị chấm lại" style={{ marginLeft: 6 }}>
-                    🔒 Đề nghị chấm lại
-                  </button>
-                )
+              {/* Nút yêu cầu chấm lại (hiện khi đang khóa) */}
+              {isLocked && !pendingRegrade && (
+                <button
+                  className="btnExit"
+                  onClick={() => setShowRegradePanel(true)}
+                  title="SV đã có điểm — gửi yêu cầu chấm lại cho admin"
+                >
+                  Yêu cầu chấm lại
+                </button>
+              )}
+              {/* Trạng thái pending */}
+              {pendingRegrade && (
+                <span className="chainChip" title={`Đang chờ admin duyệt • ${new Date(pendingRegrade.inserted_at).toLocaleString()}`}>
+                  ⏳ Đang chờ duyệt
+                </span>
               )}
             </div>
           </div>
 
-          {/* Panel đề nghị chấm lại */}
+          {/* 🔒 Panel yêu cầu chấm lại */}
           {showRegradePanel && (
-            <div className="card tealBox" style={{ marginTop: 6 }}>
+            <div className="card tealBox" style={{ marginTop: 8 }}>
               <div className="cardTitle blueText">Yêu cầu chấm lại / Request regrade</div>
-              {pendingRegrade?.id && (
-                <div className="hint" style={{ marginBottom: 6 }}>
-                  ⏳ Đã có yêu cầu đang chờ admin (gửi lúc {new Date(pendingRegrade.inserted_at).toLocaleString()}).
-                </div>
-              )}
+              <div className="hint">Sinh viên này đã có điểm. Vui lòng nêu lý do để admin xem xét.</div>
               <label className="label blueText">Lý do / Reason (optional)</label>
-              <textarea value={regradeReason} onChange={(e) => setRegradeReason(e.target.value)} rows={3} className="textarea" placeholder="VD: Lỗi nhập liệu, rubric cập nhật, giám khảo nhầm chuỗi..." />
+              <textarea
+                value={regradeReason}
+                onChange={(e) => setRegradeReason(e.target.value)}
+                rows={3}
+                className="textarea"
+                placeholder="VD: Lỗi nhập liệu, rubric cập nhật, giám khảo nhầm chuỗi..."
+              />
               <div className="actionsRow">
-                <button className="btnSaveYellow" onClick={requestRegrade} disabled={!!pendingRegrade?.id} title={pendingRegrade?.id ? "Đã có yêu cầu đang chờ admin" : "Gửi yêu cầu chấm lại"}>
-                  {pendingRegrade?.id ? "⏳ Chờ admin chấp nhận" : "Gửi yêu cầu / Submit request"}
+                <button className="btnSaveYellow" onClick={requestRegrade}>
+                  Gửi yêu cầu / Submit request
                 </button>
-                <button className="btnGhost" onClick={() => setShowRegradePanel(false)}>Hủy / Cancel</button>
+                <button className="btnGhost" onClick={() => setShowRegradePanel(false)}>
+                  Hủy / Cancel
+                </button>
               </div>
             </div>
           )}
@@ -740,7 +863,10 @@ export default function GradingRunPage() {
               <div className="rubricGrid">
                 {rubric.items.map((item: FixedRubricItem, idx: number) => (
                   <div key={item.id} className="rubricItem card">
-                    <div className={`rubricItemTitle ${idx % 2 === 0 ? "even" : "odd"}`} title={`Mục chấm #${idx + 1}`}>
+                    <div
+                      className={`rubricItemTitle ${idx % 2 === 0 ? "even" : "odd"}`}
+                      title={`Mục chấm #${idx + 1}`}
+                    >
                       {item.text}
                     </div>
                     <div className="levelsColumn">
@@ -749,8 +875,16 @@ export default function GradingRunPage() {
                         const checked = (ratings[item.id] ?? 0) === lv.score;
                         return (
                           <label key={k} className={`levelOpt ${checked ? "checked" : ""}`}>
-                            <input type="radio" name={`item_${item.id}`} value={lv.score} checked={checked} onChange={() => onSelectLevelScore(item.id, lv.score)} />
-                            <span className="levelLabel blueText">{k} ({lv.score}) — <em>{lv.desc}</em></span>
+                            <input
+                              type="radio"
+                              name={`item_${item.id}`}
+                              value={lv.score}
+                              checked={checked}
+                              onChange={() => onSelectLevelScore(item.id, lv.score)}
+                            />
+                            <span className="levelLabel blueText">
+                              {k} ({lv.score}) — <em>{lv.desc}</em>
+                            </span>
                           </label>
                         );
                       })}
@@ -767,8 +901,16 @@ export default function GradingRunPage() {
                 <div className="globalBox tealBox">
                   {(["Fail","Pass","Good","Excellent"] as GlobalRating[]).map((k) => (
                     <label key={k} className={`globalOpt ${globalRating === k ? "checked" : ""}`}>
-                      <input type="radio" name="global_rating" value={k} checked={globalRating === k} onChange={() => setGlobalRating(k)} />
-                      <span className="levelLabel tealText">{k} — <span className="desc">{DEFAULT_GLOBAL_DESC[k]}</span></span>
+                      <input
+                        type="radio"
+                        name="global_rating"
+                        value={k}
+                        checked={globalRating === k}
+                        onChange={() => setGlobalRating(k)}
+                      />
+                      <span className="levelLabel tealText">
+                        {k} — <span className="desc">{DEFAULT_GLOBAL_DESC[k]}</span>
+                      </span>
                     </label>
                   ))}
                 </div>
@@ -776,11 +918,21 @@ export default function GradingRunPage() {
 
               <div className="commentRow">
                 <label className="label blueText"><strong>Nhận xét (tùy chọn) / Optional comment</strong></label>
-                <textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={3} className="textarea" placeholder="Nhận xét về an toàn, giao tiếp, quy trình..." />
+                <textarea
+                  value={comment}
+                  onChange={(e) => setComment(e.target.value)}
+                  rows={3}
+                  className="textarea"
+                  placeholder="Nhận xét về an toàn, giao tiếp, quy trình..."
+                />
               </div>
 
               <div className="actionsRow">
-                <button className="btnSaveYellow" onClick={saveScore} disabled={disableSave}>
+                <button
+                  className="btnSaveYellow"
+                  onClick={saveScore}
+                  disabled={disableSave}
+                >
                   <span className="saveText">Lưu điểm</span>
                 </button>
               </div>
@@ -792,17 +944,17 @@ export default function GradingRunPage() {
       {/* Toast */}
       {toastMsg && (
         <div style={{
-          position: "fixed", bottom: 10, right: 10,
+          position: "fixed", bottom: 12, right: 12,
           background: "#0a1630", color: "#ffdf3b",
-          padding: "8px 12px", borderRadius: 8,
+          padding: "10px 14px", borderRadius: 10,
           border: "2px solid #0b5ed7", boxShadow: "0 2px 6px rgba(0,0,0,.25)", zIndex: 50,
-          fontWeight: 800, fontSize: 13
+          fontWeight: 800
         }}>
           {toastMsg}
         </div>
       )}
 
-      {/* styles - COMPACT */}
+      {/* styles */}
       <style jsx>{`
         :root {
           --bg: #f4f9ff;
@@ -811,7 +963,12 @@ export default function GradingRunPage() {
           --ink: #0a2a43;
           --blue: #0b5ed7;
           --blue-ghost: #e6f0ff;
+          --warn-bg: #fff4e5;
+          --warn-border: #ffdfa6;
           --green: #16a34a;
+          --blue-dark: #0a1630;
+          --blue-dark-2: #122041;
+          --ring: rgba(11, 94, 215, .25);
           --yellow: #ffdf3b;
           --yellow-dark: #e6b800;
           --teal-bg: #d5f5f2;
@@ -820,154 +977,94 @@ export default function GradingRunPage() {
           --teal-text: #0b6f6f;
         }
         .page { min-height: 100vh; background: var(--bg); color: var(--ink); }
-
-        /* Header: nhỏ gọn */
         .header {
-          display:flex; align-items:center; justify-content:space-between; gap:8px;
-          padding:10px 14px; background: linear-gradient(90deg,#eaf3ff,#e0efff);
+          display:flex; align-items:center; justify-content:space-between; gap:12px;
+          padding:16px 20px; background: linear-gradient(90deg,#eaf3ff,#e0efff);
           border-bottom:1px solid var(--border); position: sticky; top:0; z-index: 40;
         }
-        .title { font-size:16px; font-weight:700; color: var(--ink); }
-        .context { display:flex; gap:8px; color: var(--ink); flex-wrap: wrap; align-items:center; font-weight:600; font-size:13px; }
+        .title { font-size:18px; font-weight:700; color: var(--ink); }
+        .context { display:flex; gap:12px; color: var(--ink); flex-wrap: wrap; align-items:center; font-weight:600; }
         .blueText { color: var(--ink); }
-        .headerActions { display:flex; gap:6px; align-items:center; }
-
-        /* Nút: nhỏ gọn */
+        .headerActions { display:flex; gap:8px; align-items:center; }
         .btnAdmin {
           background: #1f2937; color: #fff;
-          border: 2px solid #111827; padding: 6px 10px; border-radius: 6px;
-          cursor: pointer; font-weight: 800; font-size: 13px;
-          box-shadow: 0 2px 6px rgba(0,0,0,.18);
+          border: 2px solid #111827; padding: 8px 12px; border-radius: 10px;
+          cursor: pointer; font-weight: 800; box-shadow: 0 2px 6px rgba(0,0,0,.18);
         }
         .btnExit {
           background: #1f2937; color: #fff; border: 2px solid #111827;
-          padding: 6px 10px; border-radius: 6px; cursor: pointer;
-          font-weight: 800; font-size: 13px;
-          box-shadow: 0 2px 6px rgba(0,0,0,.18); white-space: nowrap; margin-left: 4px;
+          padding: 8px 12px; border-radius: 10px; cursor: pointer;
+          font-weight: 800; box-shadow: 0 2px 6px rgba(0,0,0,.18); white-space: nowrap; margin-left: 4px;
         }
-
-        .chainChip { display: inline-flex; align-items: center; gap: 6px; background: #fff; border: 1px solid #d9e6f2; color: #0a2a43; border-radius: 999px; padding: 3px 8px; font-weight: 700; font-size: 12px; }
-        .chainDot { width: 10px; height: 10px; border-radius: 50%; border: 1px solid rgba(0,0,0,.08); display: inline-block; }
-
-        /* Grid layout */
-        .grid { display:grid; grid-template-columns: 340px 1fr; gap:12px; padding:12px; }
-
-        /* Card: nhỏ padding */
-        .card { background: var(--card-bg); border:1px solid var(--border); border-radius:10px; box-shadow:0 1px 2px rgba(0,0,0,.04); padding:10px; color: var(--ink); }
+        .chainChip { display: inline-flex; align-items: center; gap: 8px; background: #fff; border: 1px solid #d9e6f2; color: #0a2a43; border-radius: 999px; padding: 4px 10px; font-weight: 700; font-size: 13px; }
+        .chainDot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(0,0,0,.08); display: inline-block; }
+        .grid { display:grid; grid-template-columns: 360px 1fr; gap:16px; padding:16px; }
+        .card { background: var(--card-bg); border:1px solid var(--border); border-radius:10px; box-shadow:0 1px 2px rgba(0,0,0,.04); padding:12px; color: var(--ink); }
         .card.subtle { background:#f9fcff; }
-        .cardTitle { font-weight:700; margin-bottom:8px; color: var(--blue); font-size: 14px; }
-
-        .leftPane { display:flex; flex-direction:column; gap:10px; }
-        .filters { display:grid; grid-template-columns: 1fr; gap: 6px; }
-        .label { color: var(--ink); font-size:12.5px; font-weight:600; }
-        .labelNoBold { font-weight: 500 !important; color: var(--ink); font-size: 12.5px; }
-
-        /* Ô nhập: nhỏ gọn */
-        .select, .input { padding:6px 8px; border-radius:6px; border:1px solid var(--border); background:#fff; font-weight:600; color: var(--ink); font-size:13px; }
+        .cardTitle { font-weight:700; margin-bottom:10px; color: var(--blue); }
+        .leftPane { display:flex; flex-direction:column; gap:12px; }
+        .filters { display:grid; grid-template-columns: 1fr; gap: 8px; }
+        .label { color: var(--ink); font-size:13px; font-weight:600; }
+        .labelNoBold { font-weight: 400 !important; color: var(--ink); }
+        .select, .input { padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:#fff; font-weight:600; color: var(--ink); }
         .input::placeholder { color: #8196aa; font-weight:500; }
-        .graderRow { display:grid; gap:6px; margin-bottom: 8px; }
-
-        .studentList { display:flex; flex-direction:column; gap:6px; overflow:auto; max-height:44vh; padding-right:4px; }
-
-        .studentItem {
-          text-align:left; padding:6px 8px; background:#fff; border:1px solid var(--border); border-radius:6px;
-          cursor:pointer; font-weight:600; color: var(--ink); display:flex; align-items:center; gap:6px;
-          transition: background .15s ease, opacity .15s ease, color .15s ease, border-color .15s ease; font-size:13px;
-        }
+        .graderRow { display:grid; gap:6px; margin-bottom: 10px; }
+        .studentList { display:flex; flex-direction:column; gap:8px; overflow:auto; max-height:44vh; padding-right:4px; }
+        .studentItem { text-align:left; padding:8px 10px; background:#fff; border:1px solid var(--border); border-radius:8px; cursor:pointer; font-weight:600; color: var(--ink); display:flex; align-items:center; gap:8px; transition: background .15s ease, opacity .15s ease; }
         .studentItem:hover { background: var(--blue-ghost); }
-        .studentItem.selected { background:#d6f0ff; border-color:#a6d4ff; opacity: 1 !important; font-weight: 700; }
-        .studentItem .check {
-          display:inline-block; min-width:16px; height:16px; line-height:16px; text-align:center; border-radius:50%;
-          background:#dcfce7; color:#14532d; border:1px solid #bbf7d0; font-weight:700; font-size: 12px;
-        }
-
-        /* ĐÃ CHẤM nhưng CHƯA unlock → mờ & màu nhạt */
-        .studentItem.graded {
-          opacity: .55;
-          color: #6b7280;               /* xám text */
-          background: #f8fafc;          /* xám nền */
-          border-color: #e5e7eb;        /* xám border */
-        }
-        .studentItem.graded .check {
-          background:#eef2f7; color:#64748b; border-color:#e5e7eb;
-        }
-
-        /* ĐÃ CHẤP NHẬN CHẤM LẠI → đậm lại, rõ */
-        .studentItem.unlocked {
-          opacity: 1 !important;
-          color: var(--ink) !important;
-          font-weight: 700;
-          background: #ffffff;
-          border-color: var(--border);
-        }
-
-        .rightPane { display:grid; gap:10px; }
-
-        /* Score header: compact */
-        .scoreHeader { display:flex; align-items:center; justify-content:space-between; gap:8px; border-left: 4px solid var(--green); }
-        .scoreLeft { display:flex; align-items:center; gap:10px; flex-wrap: wrap; }
-        .scoreTitle { font-size:13px; font-weight:700; color:#14532d; }
-        .scoreValue { font-size:26px; font-weight:800; color:#0a2a43; background:#f0fdf4; border:2px solid #bbf7d0; border-radius:10px; padding:4px 10px; min-width:90px; text-align:center; }
-        .scoreRight { display:flex; align-items:center; gap:6px; }
-        .scoreStudentLine { display:flex; gap:6px; align-items: baseline; flex-wrap: wrap; }
-        .studentName { font-weight: 800; color: #0a2a43; font-size: 14px; }
-        .studentName.muted { font-weight: 700; color: #6b7280; font-size: 13px; }
-        .meta { font-weight: 700; color: #0a2a43; font-size: 13px; }
+        .studentItem.selected { background:#d6f0ff; border-color:#a6d4ff; }
+        .studentItem .check { display:inline-block; min-width:18px; height:18px; line-height:18px; text-align:center; border-radius:50%; background:#dcfce7; color:#14532d; border:1px solid #bbf7d0; font-weight:700; }
+        .studentItem.graded { opacity: .55; }
+        .rightPane { display:grid; gap:12px; }
+        .scoreHeader { display:flex; align-items:center; justify-content:space-between; gap:12px; border-left: 4px solid var(--green); }
+        .scoreLeft { display:flex; align-items:center; gap:16px; flex-wrap: wrap; }
+        .scoreTitle { font-size:14px; font-weight:700; color:#14532d; }
+        .scoreValue { font-size:34px; font-weight:800; color:#0a2a43; background:#f0fdf4; border:2px solid #bbf7d0; border-radius:12px; padding:6px 14px; min-width:110px; text-align:center; }
+        .scoreRight { display:flex; align-items:center; gap:8px; }
+        .scoreStudentLine { display:flex; gap:8px; align-items: baseline; flex-wrap: wrap; }
+        .studentName { font-weight: 800; color: #0a2a43; }
+        .studentName.muted { font-weight: 700; color: #6b7280; }
+        .meta { font-weight: 700; color: #0a2a43; }
         .dot { color: #64748b; font-weight: 800; }
-
-        /* Nút vàng & ghost: compact */
         .btnSaveYellow {
           background: var(--yellow); color: var(--ink) !important; border: 2px solid var(--yellow-dark);
-          padding: 6px 10px; border-radius: 6px; cursor: pointer; font-weight: 800;
-          box-shadow: 0 2px 6px rgba(0,0,0,.15); white-space: nowrap; font-size: 13px;
+          padding: 10px 16px; border-radius: 10px; cursor: pointer; font-weight: 800;
+          box-shadow: 0 2px 6px rgba(0,0,0,.15); white-space: nowrap;
         }
         .btnSaveYellow:disabled { opacity: .6; cursor: not-allowed; }
-        .saveText { font-weight: 800; font-size: 13px; }
-        .btnGhost {
-          background: #fff7ed; color: #b45309; border: 1px solid #f59e0b;
-          padding: 6px 10px; border-radius: 6px; cursor: pointer; font-weight: 800;
-          box-shadow: 0 2px 6px rgba(0,0,0,.08); white-space: nowrap; font-size: 13px;
-        }
-        .btnGhost:hover { background: #ffedd5; }
-
-        .rubricGrid { display:grid; gap:10px; }
-        .rubricItem { border-radius:8px; color: var(--ink); }
-        .rubricItemTitle { font-weight:800; margin-bottom:6px; border-radius:6px; padding:6px 8px; color: var(--blue); font-size: 13.5px; }
+        .saveText { font-weight: 800; }
+        .rubricGrid { display:grid; gap:12px; }
+        .rubricItem { border-radius:10px; color: var(--ink); }
+        .rubricItemTitle { font-weight:800; margin-bottom:6px; border-radius:8px; padding:8px 10px; color: var(--blue); }
         .rubricItemTitle.even { background:#eef7ff; border:1px solid #b8e1ff; }
         .rubricItemTitle.odd { background:#f9fafb; border:1px solid #e5e7eb; }
-
         .levelsColumn { display: grid; grid-template-columns: 1fr; gap: 6px; }
-        .levelOpt { display:flex; align-items:center; gap:6px; border:1px solid var(--border); border-radius:6px; padding:6px 8px; background:#fff; cursor:pointer; font-weight:600; color: var(--ink); font-size:13px; }
+        .levelOpt { display:flex; align-items:center; gap:6px; border:1px solid var(--border); border-radius:8px; padding:8px 10px; background:#fff; cursor:pointer; font-weight:600; color: var(--ink); }
         .levelOpt.checked { background:#eef7ff; border-color:#b8e1ff; }
         .levelOpt input { accent-color: var(--blue); }
-        .levelLabel em { color: #295e85; font-size: 12.5px; }
-
-        .divider { border-top:1px dashed var(--border); margin:6px 0; }
-
-        .globalRow { display:grid; gap:6px; }
+        .levelLabel em { color: #295e85; }
+        .divider { border-top:1px dashed var(--border); margin:8px 0; }
+        .globalRow { display:grid; gap:8px; }
         .globalBox { width: 100%; }
         .tealBox {
           background: var(--teal-bg); border: 2px solid var(--teal-border);
-          border-radius: 10px; padding: 10px 10px; box-shadow: 0 2px 8px rgba(8, 151, 156, .12);
+          border-radius: 12px; padding: 12px 12px; box-shadow: 0 2px 8px rgba(8, 151, 156, .12);
         }
-        .tealText, .globalOpt .levelLabel, .globalOpt .desc { font-weight: 500 !important; }
+        .tealText, .globalOpt .levelLabel, .globalOpt .desc { font-weight: 400 !important; }
         .globalOpt {
-          display:flex; align-items:center; gap:6px; border:1px solid var(--teal-border);
-          border-radius:6px; padding:6px 8px; background:#ffffff; color: var(--ink); font-weight: 500; font-size:13px;
+          display:flex; align-items:center; gap:8px; border:1px solid var(--teal-border);
+          border-radius:8px; padding:8px 10px; background:#ffffff; color: var(--ink); font-weight: 400;
         }
         .globalOpt.checked { background: #e9fbfa; border-color: var(--teal-deep); }
-        .globalOpt input { accent-color: var (--teal-deep); }
-        .globalOpt .desc { color: var(--teal-text); font-size: 12.5px; }
-
+        .globalOpt input { accent-color: var(--teal-deep); }
+        .globalOpt .desc { color: var(--teal-text); }
         .commentRow { display:grid; gap:6px; color: var(--ink); }
-        .textarea { width:100%; border-radius:8px; border:1px solid var(--border); padding:6px 8px; font-weight:600; color: var(--ink); font-size:13px; }
-
-        .actionsRow { display:flex; gap:6px; justify-content:flex-end; margin-top:6px; }
-        .hint { color: var(--ink); font-weight:600; opacity: 0.95; font-size: 12.5px; }
-
+        .textarea { width:100%; border-radius:10px; border:1px solid var(--border); padding:8px 10px; font-weight:600; color: var(--ink); }
+        .actionsRow { display:flex; gap:8px; justify-content:flex-end; margin-top:8px; }
+        .hint { color: var(--ink); font-weight:600; opacity: 0.95; }
         @media (max-width: 900px) {
           .grid { grid-template-columns: 1fr; }
-          .scoreLeft { gap: 8px; }
+          .scoreLeft { gap: 10px; }
         }
       `}</style>
     </div>

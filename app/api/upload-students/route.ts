@@ -18,31 +18,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Thiếu file' }, { status: 400 });
     }
 
-    // Giới hạn dung lượng (tuỳ chỉnh)
     const MAX_SIZE = 5 * 1024 * 1024; // 5MB
     if (file.size > MAX_SIZE) {
       return NextResponse.json({ error: 'File quá lớn (>5MB)' }, { status: 413 });
     }
 
-    // Chỉ chấp nhận .xlsx (exceljs không hỗ trợ .xls cũ)
     const allowedTypes = [
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'application/octet-stream', // một số trình duyệt dùng type này
+      'application/octet-stream',
+      'application/vnd.ms-excel',
     ];
     if (!allowedTypes.includes(file.type)) {
       return NextResponse.json({ error: `Sai định dạng: ${file.type}` }, { status: 415 });
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
+    // ✅ Đọc file thành ArrayBuffer và nạp trực tiếp (tránh kiểu Buffer<T>)
+    const arrayBuffer = await file.arrayBuffer();
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(buffer);
+    await workbook.xlsx.load(arrayBuffer as ArrayBuffer);
 
     const sheet = workbook.getWorksheet(1);
     if (!sheet) {
       return NextResponse.json({ error: 'Không tìm thấy sheet 1' }, { status: 400 });
     }
 
-    // Lấy Levels/Cohorts để validate
     const [{ data: levels, error: levelErr }, { data: cohorts, error: cohortErr }] = await Promise.all([
       supabaseAdmin.from('levels').select('*'),
       supabaseAdmin.from('cohorts').select('*'),
@@ -58,11 +57,9 @@ export async function POST(req: NextRequest) {
     const rows: RawRow[] = [];
     const errors: ErrorItem[] = [];
 
-    // Helper lấy text theo vị trí cột
     const cellText = (row: ExcelJS.Row, col: number) =>
       row.getCell(col).text ? String(row.getCell(col).text).trim() : '';
 
-    // Header ở dòng 1, dữ liệu từ dòng 2
     sheet.eachRow((row, rowNumber) => {
       if (rowNumber === 1) return;
       const line = rowNumber;
@@ -81,7 +78,6 @@ export async function POST(req: NextRequest) {
         batch_number: Number(cellText(row, 9) || 0),
       };
 
-      // Required fields
       const requiredFields = [
         'student_code',
         'last_name',
@@ -94,13 +90,12 @@ export async function POST(req: NextRequest) {
         'batch_number',
       ];
       for (const f of requiredFields) {
-        const v = dataRow[f];
+        const v = (dataRow as any)[f];
         if (v == null || (typeof v === 'string' && v.trim() === '') || v === 0) {
           errors.push({ row: line, column: f, message: 'Thiếu dữ liệu' });
         }
       }
 
-      // Constraints
       if (dataRow.birth_year && (dataRow.birth_year < 1980 || dataRow.birth_year > 2010)) {
         errors.push({ row: line, column: 'birth_year', message: 'birth_year ngoài phạm vi 1980-2010' });
       }
@@ -114,7 +109,6 @@ export async function POST(req: NextRequest) {
         errors.push({ row: line, column: 'batch_number', message: 'batch_number phải > 0' });
       }
 
-      // Validate Level/Cohort tồn tại
       const levelId = levelMap.get(String(dataRow.level_name).trim());
       if (dataRow.level_name && !levelId) {
         errors.push({ row: line, column: 'level_name', message: 'Level không tồn tại' });

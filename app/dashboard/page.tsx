@@ -3,7 +3,7 @@
 
 import { useMemo, useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { SignOutButton } from './signout-button';
+import LogoutButton from '@/components/logoutbutton'; // ✅ dùng đúng tên file chữ thường
 import { supabase } from '@/lib/supabaseClient';
 
 type Item = { href: string; title: string; desc: string; icon: string; hotkey?: string };
@@ -317,7 +317,7 @@ export default function AdminDashboardPage() {
                 />
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-blue-500 text-xs">/</span>
               </div>
-              <SignOutButton />
+              <LogoutButton /> {/* ✅ dùng nút đăng xuất hiện có */}
             </div>
           </div>
 
@@ -455,4 +455,3 @@ export default function AdminDashboardPage() {
     </main>
   );
 }
-``

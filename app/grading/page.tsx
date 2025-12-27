@@ -26,7 +26,7 @@ interface ExamSession {
   exam_round_id: UUID;
   student_id: UUID;
   chain_id: UUID | null;
-  chains?: { name: string; color?: string | null };
+  chains?: { name: string; color?: string | null }[];
 }
 
 const ADMIN_DASHBOARD_PATH = "/dashboard/admin";

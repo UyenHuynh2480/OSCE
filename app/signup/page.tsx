@@ -4,6 +4,7 @@
 import { useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 export default function SignUpPage() {
   const router = useRouter();
@@ -68,7 +69,8 @@ export default function SignUpPage() {
       {message && <p style={{ color: 'green' }}>{message}</p>}
 
       <p style={{ marginTop: 8 }}>
-        Đã có tài khoản? /loginĐăng nhập</a>
+        Đã có tài khoản?{' '}
+        <Link href="/login">Đăng nhập</Link>
       </p>
     </div>
   );

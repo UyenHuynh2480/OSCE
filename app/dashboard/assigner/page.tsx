@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 
 const ADMIN_DASHBOARD_PATH = "/dashboard/admin";
 const UPLOADER_DASHBOARD_PATH = "/dashboard/uploader";
@@ -44,7 +45,6 @@ export default function AssignerPage() {
               .toString()
               .trim()
               .toLowerCase();
-            console.log("DEBUG role:", normalized);
             setRole(normalized || null);
           }
         }
@@ -53,14 +53,16 @@ export default function AssignerPage() {
       }
     })();
 
-    // Optional: theo dõi thay đổi phiên để tránh render sai khi token đổi
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, _session) => {
-      // Có thể setLoadingRole(true) và refetch nếu muốn
-    });
+    // Theo dõi thay đổi phiên (optional: để bắt kịp trạng thái đăng nhập)
+    const { data: sub } = supabase.auth.onAuthStateChange(
+      (_event: AuthChangeEvent, _session: Session | null) => {
+        // có thể setLoadingRole(true) rồi refetch role nếu cần
+      }
+    );
 
     return () => {
       mounted = false;
-      sub?.subscription.unsubscribe();
+      sub?.subscription?.unsubscribe();
     };
   }, []);
 
@@ -212,4 +214,3 @@ export default function AssignerPage() {
     </div>
   );
 }
-``

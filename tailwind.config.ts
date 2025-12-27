@@ -2,7 +2,7 @@
 import type { Config } from 'tailwindcss';
 
 const config: Config = {
-  darkMode: ['class'], // dùng .dark để bật/tắt Dark Mode
+ darkMode: "class", // dùng .dark để bật/tắt Dark Mode
   content: [
     './app/**/*.{ts,tsx}',
     './components/**/*.{ts,tsx}',

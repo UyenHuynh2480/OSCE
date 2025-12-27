@@ -3,13 +3,13 @@
 
 import { useMemo, useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { SignOutButton } from './signout-button';
+import LogoutButton from '@/components/logoutbutton';
 import { supabase } from '@/lib/supabaseClient';
 
 type Item = { href: string; title: string; desc: string; icon: string; hotkey?: string };
 type Group = { id: string; title: string; items: Item[] };
 
-/** 6 nhóm chính */
+/** 6 nhóm chính theo yêu cầu (đã thêm nhóm Results) */
 const GROUPS: Group[] = [
   {
     id: 'admin',
@@ -18,7 +18,7 @@ const GROUPS: Group[] = [
       {
         href: '/dashboard/admin/users',
         title: 'Danh sách tài khoản • Users',
-        desc: 'Xem &amp; quản lý tất cả user (join profiles) • View &amp; manage all users',
+        desc: 'Xem & quản lý tất cả user (join profiles) • View & manage all users',
         icon: '👥',
         hotkey: 'U',
       },
@@ -65,6 +65,8 @@ const GROUPS: Group[] = [
       { href: '/grading', title: 'Form chấm • Grading Form', desc: 'Theo rubric • Rubric-based', icon: '✅', hotkey: 'D' },
     ],
   },
+
+  /** 🆕 Nhóm Kết quả • Results — đi thẳng tới route /results */
   {
     id: 'results',
     title: 'Kết quả • Results',
@@ -72,7 +74,7 @@ const GROUPS: Group[] = [
       {
         href: '/results',
         title: 'Xem kết quả • Results',
-        desc: 'Lọc theo Level/Cohort/Round/Station/Chain • Xuất Excel bảng điểm &amp; dashboard rubric',
+        desc: 'Lọc theo Level/Cohort/Round/Station/Chain • Xuất Excel bảng điểm & dashboard rubric',
         icon: '📊',
         hotkey: 'K',
       },
@@ -80,7 +82,7 @@ const GROUPS: Group[] = [
   },
 ];
 
-/** View regrade */
+/** View từ Supabase: regrade_requests_view */
 interface RegradeRequestView {
   id: string;
   inserted_at: string;
@@ -98,6 +100,8 @@ interface RegradeRequestView {
   student_code?: string | null;
   last_name?: string | null;
   name?: string | null;
+  cohort_year?: number | null;
+  level_name?: string | null;
 }
 
 export default function AdminDashboardPage() {
@@ -119,7 +123,7 @@ export default function AdminDashboardPage() {
     );
   }, [query, currentGroup]);
 
-  /** Hotkeys */
+  /** Phím tắt: 1–6 chuyển nhóm, / focus search, hotkey item */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -133,7 +137,10 @@ export default function AdminDashboardPage() {
         '5': 'grading',
         '6': 'results',
       };
-      if (tabMap[key]) { setActive(tabMap[key]); return; }
+      if (tabMap[key]) {
+        setActive(tabMap[key]);
+        return;
+      }
 
       if (key === '/') {
         const el = document.getElementById('dashboard-search') as HTMLInputElement | null;
@@ -143,23 +150,24 @@ export default function AdminDashboardPage() {
       }
 
       const target = currentGroup.items.find((it) => it.hotkey?.toUpperCase() === key);
-      if (target) window.location.href = target.href;
+      if (target) {
+        window.location.href = target.href;
+      }
     };
 
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [currentGroup]);
 
-  const isCompact = active === 'manage';
+  /** ========= BANNER YÊU CẦU CHẤM LẠI DÀNH CHO ADMIN ========= */
 
-  /** ==================== Banner Regrade ==================== */
   const [role, setRole] = useState<string>('');
   const [myGraderId, setMyGraderId] = useState<string | null>(null);
   const [pending, setPending] = useState<RegradeRequestView[]>([]);
   const [loadingRegrade, setLoadingRegrade] = useState<boolean>(false);
   const [toast, setToast] = useState<string>('');
-  const [graderMap, setGraderMap] = useState<Record<string, string>>({});
 
+  // Lấy role + grader_id của tài khoản đang đăng nhập
   useEffect(() => {
     (async () => {
       const { data: auth } = await supabase.auth.getUser();
@@ -175,21 +183,11 @@ export default function AdminDashboardPage() {
     })();
   }, []);
 
-  /** map graders.id -> tên */
-  useEffect(() => {
-    (async () => {
-      const { data, error } = await supabase
-        .from('graders')
-        .select('id, last_name, first_name');
-      if (error) { console.error(error); return; }
-      const map: Record<string, string> = {};
-      (data ?? []).forEach(g => { map[g.id] = `${g.last_name} ${g.first_name}`.trim(); });
-      setGraderMap(map);
-    })();
-  }, []);
-
   const fetchPending = useCallback(async () => {
-    if (role !== 'admin') { setPending([]); return; }
+    if (role !== 'admin') {
+      setPending([]);
+      return;
+    }
     setLoadingRegrade(true);
     const { data, error } = await supabase
       .from('regrade_requests_view')
@@ -207,19 +205,31 @@ export default function AdminDashboardPage() {
 
   useEffect(() => {
     fetchPending();
+    // Poll 30s/lần để admin thấy yêu cầu mới
     const t = setInterval(fetchPending, 30000);
     return () => clearInterval(t);
   }, [fetchPending]);
 
-  const notify = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 1500); };
+  const notify = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(''), 1500);
+  };
 
   const approveRequest = async (req: RegradeRequestView) => {
     if (role !== 'admin') return;
+    // Cập nhật status = 'approved' + approved_by_admin (graders.id) + approved_at
     const { error } = await supabase
       .from('regrade_requests')
-      .update({ status: 'approved', approved_by_admin: myGraderId ?? null, approved_at: new Date().toISOString() })
+      .update({
+        status: 'approved',
+        approved_by_admin: myGraderId ?? null,
+        approved_at: new Date().toISOString(),
+      })
       .eq('id', req.id);
-    if (error) { alert('Duyệt thất bại: ' + error.message); return; }
+    if (error) {
+      alert('Duyệt thất bại: ' + error.message);
+      return;
+    }
     notify('✅ Đã duyệt mở chấm lại');
     await fetchPending();
   };
@@ -228,19 +238,28 @@ export default function AdminDashboardPage() {
     if (role !== 'admin') return;
     const { error } = await supabase
       .from('regrade_requests')
-      .update({ status: 'rejected', approved_by_admin: myGraderId ?? null, approved_at: new Date().toISOString() })
+      .update({
+        status: 'rejected',
+        approved_by_admin: myGraderId ?? null, // lưu dấu người quyết định (tùy chọn)
+        approved_at: new Date().toISOString(),
+      })
       .eq('id', req.id);
-    if (error) { alert('Từ chối thất bại: ' + error.message); return; }
+    if (error) {
+      alert('Từ chối thất bại: ' + error.message);
+      return;
+    }
     notify('⛔ Đã từ chối yêu cầu');
     await fetchPending();
   };
-  /** ==================== /Banner ==================== */
+
+  /** CỜ: nhóm "manage" dùng card thấp hơn */
+  const isCompact = active === 'manage';
 
   return (
     <main className="min-h-screen bg-white text-blue-900">
-      {/* Khung 2 cột */}
+      {/* Khung 2 cột: Sidebar trái + Content phải */}
       <div className="grid grid-cols-1 md:grid-cols-[240px_1fr]">
-        {/* Sidebar trái */}
+        {/* Sidebar trái — chữ căn lề trái */}
         <aside className="md:min-h-screen md:sticky md:top-0 border-r border-blue-200 bg-blue-50/50">
           <div className="px-4 py-4 md:py-6">
             <h1 className="text-xl font-bold mb-3">Admin Dashboard</h1>
@@ -249,7 +268,7 @@ export default function AdminDashboardPage() {
               <kbd className="px-1 py-[2px] rounded border border-blue-300">/</kbd> để tìm
             </p>
 
-            {/* NAV */}
+            {/* NAV: chữ căn trái, badge bên phải */}
             <nav className="flex flex-col">
               {GROUPS.map((g, idx) => {
                 const isActive = g.id === active;
@@ -278,9 +297,9 @@ export default function AdminDashboardPage() {
           </div>
         </aside>
 
-        {/* Content phải */}
+        {/* Content phải — trung tâm hiển thị theo nhóm */}
         <section className="p-4 md:p-6">
-          {/* Header content */}
+          {/* Header content: Search + Sign out */}
           <div className="flex items-center justify-between gap-3 mb-4">
             <div className="flex items-center gap-3">
               <h2 className="text-lg font-semibold">{currentGroup.title}</h2>
@@ -298,11 +317,11 @@ export default function AdminDashboardPage() {
                 />
                 <span className="absolute right-2 top-1/2 -translate-y-1/2 text-blue-500 text-xs">/</span>
               </div>
-              <SignOutButton />
+              <LogoutButton />
             </div>
           </div>
 
-          {/* 📨 Banner Regrade */}
+          {/* ========= BANNER: YÊU CẦU CHẤM LẠI ========= */}
           {role === 'admin' && (
             <div className="mb-4">
               <div className="rounded-lg border border-blue-300 bg-blue-50 p-3">
@@ -325,9 +344,11 @@ export default function AdminDashboardPage() {
                   <ul className="mt-2 space-y-2">
                     {pending.map((req) => {
                       const studentFullName = `${req.last_name ?? ''} ${req.name ?? ''}`.trim();
-                      const graderName = graderMap[req.requested_by] ?? '(Giảng viên không xác định)';
                       return (
-                        <li key={req.id} className="rounded-md border border-blue-200 bg-white p-2.5">
+                        <li
+                          key={req.id}
+                          className="rounded-md border border-blue-200 bg-white p-2.5"
+                        >
                           <div className="flex items-start gap-3">
                             <span
                               className="inline-flex h-6 w-6 items-center justify-center rounded-full border text-xs"
@@ -341,8 +362,7 @@ export default function AdminDashboardPage() {
                                 Chuỗi {req.chain_name ?? '—'} • Trạm {req.station_name ?? '—'}
                               </div>
                               <div className="text-[12px] text-blue-800/80">
-                                <strong>GV đề nghị:</strong> {graderName}{' '}
-                                • SV <strong>{studentFullName}</strong>{' '}
+                                Yêu cầu chấm lại SV <strong>{studentFullName}</strong>{' '}
                                 {req.student_code ? `(${req.student_code})` : ''}
                                 {req.round_name ? ` • ${req.round_name}` : ''}
                               </div>
@@ -373,19 +393,23 @@ export default function AdminDashboardPage() {
                   </ul>
                 )}
               </div>
-              {toast && <div className="mt-2 text-xs text-green-700">{toast}</div>}
+              {toast && (
+                <div className="mt-2 text-xs text-green-700">{toast}</div>
+              )}
             </div>
           )}
 
-          {/* Danh sách card (giữ nguyên) */}
+          {/* Danh sách dọc: card thấp, giữ padding/icon/font */}
           <div className="flex flex-col gap-2.5">
             {filteredItems.map((it) => (
               <Link
                 key={it.href}
                 href={it.href}
-                className={`group rounded-lg border border-blue-200 bg-white
+                className={
+                  `group rounded-lg border border-blue-200 bg-white
                    p-2.5 flex flex-col ${isCompact ? 'min-h-[46px]' : 'min-h-[50px]'}
-                   hover:border-blue-400 hover:shadow-md transition-all`}
+                   hover:border-blue-400 hover:shadow-md transition-all`
+                }
               >
                 <div className="flex items-start gap-2.5">
                   <div
@@ -395,11 +419,16 @@ export default function AdminDashboardPage() {
                     {it.icon}
                   </div>
                   <div className="min-w-0">
-                    <h3 className="text-[13px] font-semibold leading-tight mb-0.5 line-clamp-1">{it.title}</h3>
-                    <p className="text-[12px] text-blue-700/80 line-clamp-1">{it.desc}</p>
+                    <h3 className="text-[13px] font-semibold leading-tight mb-0.5 line-clamp-1">
+                      {it.title}
+                    </h3>
+                    <p className="text-[12px] text-blue-700/80 line-clamp-1">
+                      {it.desc}
+                    </p>
                   </div>
                 </div>
 
+                {/* Footer: dính đáy để card cân */}
                 <div className={isCompact ? 'mt-auto pt-0.5' : 'mt-auto pt-1'}>
                   <div className="flex items-center justify-end gap-2">
                     {it.hotkey && (

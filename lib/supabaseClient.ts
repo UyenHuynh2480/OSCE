@@ -1,26 +1,17 @@
 
 // lib/supabaseClient.ts
-'use client';
+import { createClient } from "@supabase/supabase-js";
 
-import { createBrowserClient } from '@supabase/ssr';
-
-// Lưu ý: trong dev (localhost, HTTP), cookie secure phải = false
-export const supabase = createBrowserClient(
+// Client cho phía trình duyệt (use client).
+// v2.89.0: KHÔNG truyền cookieOptions ở cấp root.
+export const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, // hoặc publishable key nếu bạn đã dùng key mới
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
   {
     auth: {
-      persistSession: true,        // lưu phiên
-      autoRefreshToken: true,      // tự refresh token
-      detectSessionInUrl: true,    // xử lý callback (email link, v.v.)
-      // cookieOptions áp dụng cho trình duyệt (client) khi Supabase đặt cookie
-      cookieOptions: {
-        name: 'sb-session',        // tên cookie tuỳ chọn
-        path: '/',                 // cookie có hiệu lực toàn site
-        sameSite: 'lax',           // cho phép điều hướng nội bộ
-        secure: process.env.NODE_ENV !== 'development' ? true : false, // localhost = false
-        maxAge: 60 * 60,           // 1 giờ (tuỳ chỉnh)
-      },
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: true,
     },
   }
 );

@@ -1,55 +1,72 @@
 
+// app/api/me/update-password/route.ts
 import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
+import { cookies } from 'next/headers';
 import { createServerClient } from '@supabase/ssr';
 
-export async function POST(req: NextRequest) {
+/**
+ * Cập nhật mật khẩu cho user hiện tại.
+ * Yêu cầu: đang đăng nhập; body JSON: { newPassword: string }
+ */
+export async function POST(req: Request) {
   try {
-    const res = NextResponse.next();
+    const { newPassword } = await req.json();
+
+    if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 6) {
+      return NextResponse.json(
+        { error: 'Mật khẩu mới không hợp lệ (tối thiểu 6 ký tự).' },
+        { status: 400 }
+      );
+    }
+
+    // 👉 Trong môi trường của anh/chị, cookies() trả về Promise → cần await
+    const cookieStore = await cookies();
+
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       {
         cookies: {
-          get: (name: string) => req.cookies.get(name)?.value,
-          set: (name: string, value: string, options: any) =>
-            res.cookies.set({ name, value, ...options }),
-          remove: (name: string, options: any) =>
-            res.cookies.set({ name, value: '', maxAge: 0, ...options }),
+          // Lấy giá trị cookie hiện thời của phiên Supabase
+          get(name: string) {
+            return cookieStore.get(name)?.value;
+          },
+          // Cập nhật cookie khi phiên thay đổi (refresh, v.v.)
+          set(name: string, value: string, options?: any) {
+            // Next hỗ trợ chữ ký set(name, value, options)
+            cookieStore.set(name, value, options);
+          },
+          // Xoá cookie khi signOut
+          remove(name: string, _options?: any) {
+            cookieStore.delete(name);
+          },
         },
       }
     );
 
-    const { new_password } = await req.json();
-    if (!new_password) {
-      return NextResponse.json({ ok: false, error: 'Thiếu new_password' }, { status: 400 });
+    // Bắt buộc phải có user đăng nhập
+    const { data: userData, error: getUserError } = await supabase.auth.getUser();
+    if (getUserError) {
+      return NextResponse.json({ error: getUserError.message }, { status: 401 });
+    }
+    if (!userData?.user) {
+      return NextResponse.json({ error: 'Chưa đăng nhập.' }, { status: 401 });
     }
 
-    // Phiên hiện tại
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    if (!session) {
-      return NextResponse.json({ ok: false, error: 'Chưa đăng nhập' }, { status: 401 });
-    }
+    // Cập nhật mật khẩu người dùng hiện tại
+    const { error: updateError } = await supabase.auth.updateUser({
+      password: newPassword,
+    });
 
-    // 1) Người dùng tự đổi password
-    const { data, error } = await supabase.auth.updateUser({ password: new_password });
-    if (error) {
-      return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
-    }
-
-    // 2) Ghi dấu mốc vào profiles
-    const { error: e2 } = await supabase
-      .from('profiles')
-      .update({ password_last_user_set_at: new Date().toISOString() })
-      .eq('user_id', session.user.id);
-    if (e2) {
-      return NextResponse.json({ ok: true, warn: e2.message });
+    if (updateError) {
+      return NextResponse.json({ error: updateError.message }, { status: 400 });
     }
 
     return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? 'Lỗi không xác định' }, { status: 500 });
+  } catch (err: any) {
+    return NextResponse.json(
+      { error: err?.message ?? 'Lỗi không xác định.' },
+      { status: 500 }
+    );
   }
 }

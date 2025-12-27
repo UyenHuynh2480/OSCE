@@ -1,23 +1,41 @@
 
-'use client';
+// app/dashboard/admin/reset-password/page.tsx
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
-import { createClient } from '@supabase/supabase-js';
+import { Suspense, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { createClient } from "@supabase/supabase-js";
+
+/* ============================== Suspense Wrapper ============================== */
+/**
+ * Next.js 16 App Router: mọi Client Component dùng useSearchParams() phải
+ * được bọc trong <Suspense> để tránh CSR bailout khi prerender/export.
+ */
+export default function Page() {
+  return (
+    <Suspense fallback={<div className="p-4">Đang tải trang đặt mật khẩu mới…</div>}>
+      <ResetPasswordPageInner />
+    </Suspense>
+  );
+}
 
 /* ============================== Types ============================== */
-type Role = 'admin' | 'grader' | 'uploader' | 'assigner' | 'score_viewer';
+type Role = "admin" | "grader" | "uploader" | "assigner" | "score_viewer";
 type Profile = {
   user_id: string;
   role: Role | string;
   display_name?: string | null;
 };
 
-type ToastKind = 'success' | 'warning' | 'error' | 'info';
+type ToastKind = "success" | "warning" | "error" | "info";
 type ToastItem = { id: number; kind: ToastKind; message: string };
 
 /* ============================== Supabase ============================== */
+/**
+ * Trang này tự tạo client Supabase cục bộ (đúng với code gốc bạn gửi).
+ * Nếu bạn đã có `lib/supabaseClient`, có thể import từ đó thay vì createClient ở đây.
+ */
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -32,15 +50,15 @@ function assessPassword(pwd: string) {
   const special = /[^A-Za-z0-9]/.test(pwd);
 
   const score = [len, upper, lower, digit, special].filter(Boolean).length;
-  let level: 'Yếu' | 'Trung bình' | 'Mạnh' | 'Rất mạnh' = 'Yếu';
-  if (score >= 4) level = 'Mạnh';
-  if (score === 5) level = 'Rất mạnh';
-  else if (score === 3) level = 'Trung bình';
+  let level: "Yếu" | "Trung bình" | "Mạnh" | "Rất mạnh" = "Yếu";
+  if (score >= 4) level = "Mạnh";
+  if (score === 5) level = "Rất mạnh";
+  else if (score === 3) level = "Trung bình";
   return { score, level, checks: { len, upper, lower, digit, special } };
 }
 
 const initialOf = (s?: string | null, fallback?: string) =>
-  ((s ?? '').trim()[0] || (fallback ?? '')[0] || '•').toUpperCase();
+  ((s ?? "").trim()[0] || (fallback ?? "")[0] || "•").toUpperCase();
 
 /* ============================== Toast component ============================== */
 function ToastStack({ items, remove }: { items: ToastItem[]; remove: (id: number) => void }) {
@@ -48,13 +66,13 @@ function ToastStack({ items, remove }: { items: ToastItem[]; remove: (id: number
     <div className="fixed top-4 right-4 z-50 flex flex-col gap-2">
       {items.map((t) => {
         const palette =
-          t.kind === 'success'
-            ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-            : t.kind === 'warning'
-            ? 'bg-amber-50 text-amber-800 border-amber-200'
-            : t.kind === 'error'
-            ? 'bg-rose-50 text-rose-800 border-rose-200'
-            : 'bg-sky-50 text-sky-800 border-sky-200';
+          t.kind === "success"
+            ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+            : t.kind === "warning"
+            ? "bg-amber-50 text-amber-800 border-amber-200"
+            : t.kind === "error"
+            ? "bg-rose-50 text-rose-800 border-rose-200"
+            : "bg-sky-50 text-sky-800 border-sky-200";
         return (
           <div
             key={t.id}
@@ -63,7 +81,7 @@ function ToastStack({ items, remove }: { items: ToastItem[]; remove: (id: number
             aria-live="polite"
           >
             <div className="text-lg">
-              {t.kind === 'success' ? '✅' : t.kind === 'warning' ? '⚠️' : t.kind === 'error' ? '❌' : 'ℹ️'}
+              {t.kind === "success" ? "✅" : t.kind === "warning" ? "⚠️" : t.kind === "error" ? "❌" : "ℹ️"}
             </div>
             <div className="flex-1 text-sm">{t.message}</div>
             <button
@@ -81,12 +99,12 @@ function ToastStack({ items, remove }: { items: ToastItem[]; remove: (id: number
   );
 }
 
-/* ============================== Page ============================== */
-export default function ResetPasswordPage() {
+/* ============================== Page Inner (logic gốc) ============================== */
+function ResetPasswordPageInner() {
   const searchParams = useSearchParams();
   const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [userId, setUserId] = useState<string>('');
-  const [newPassword, setNewPassword] = useState<string>('');
+  const [userId, setUserId] = useState<string>("");
+  const [newPassword, setNewPassword] = useState<string>("");
   const [showPwd, setShowPwd] = useState<boolean>(false);
   const [loading, setLoading] = useState(false);
 
@@ -104,18 +122,18 @@ export default function ResetPasswordPage() {
   useEffect(() => {
     const load = async () => {
       const { data, error } = await supabase
-        .from('profiles')
-        .select('user_id, role, display_name')
-        .order('role', { ascending: true });
+        .from("profiles")
+        .select("user_id, role, display_name")
+        .order("role", { ascending: true });
       if (error) {
-        pushToast('error', 'Lỗi tải danh sách tài khoản: ' + error.message);
+        pushToast("error", "Lỗi tải danh sách tài khoản: " + error.message);
       } else {
         setProfiles(data || []);
       }
     };
     load();
 
-    const qUserId = searchParams.get('user_id');
+    const qUserId = searchParams.get("user_id");
     if (qUserId) setUserId(qUserId);
   }, [searchParams]);
 
@@ -124,30 +142,30 @@ export default function ResetPasswordPage() {
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userId || !newPassword) {
-      pushToast('warning', 'Vui lòng chọn tài khoản và nhập mật khẩu mới.');
+      pushToast("warning", "Vui lòng chọn tài khoản và nhập mật khẩu mới.");
       return;
     }
     if (newPassword.length < 8) {
-      pushToast('warning', 'Mật khẩu tối thiểu 8 ký tự.');
+      pushToast("warning", "Mật khẩu tối thiểu 8 ký tự.");
       return;
     }
 
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/reset-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch("/api/admin/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: userId, new_password: newPassword }),
       });
       const j = await res.json();
       if (!res.ok || !j.ok) {
-        pushToast('error', 'Đổi mật khẩu lỗi: ' + (j.error || res.statusText));
+        pushToast("error", "Đổi mật khẩu lỗi: " + (j.error || res.statusText));
       } else {
-        pushToast('success', 'Đổi mật khẩu thành công!');
-        setNewPassword('');
+        pushToast("success", "Đổi mật khẩu thành công!");
+        setNewPassword("");
       }
     } catch (err: any) {
-      pushToast('error', 'Lỗi hệ thống: ' + (err?.message ?? 'Không xác định'));
+      pushToast("error", "Lỗi hệ thống: " + (err?.message ?? "Không xác định"));
     } finally {
       setLoading(false);
     }
@@ -202,7 +220,7 @@ export default function ResetPasswordPage() {
                 <option value="">— Chọn —</option>
                 {profiles.map((p) => (
                   <option key={p.user_id} value={p.user_id}>
-                    {(p.display_name || p.user_id) + ' — (' + p.role + ')'}
+                    {(p.display_name || p.user_id) + " — (" + p.role + ")"}
                   </option>
                 ))}
               </select>
@@ -210,8 +228,8 @@ export default function ResetPasswordPage() {
                 <SelectedUserInfo
                   userId={userId}
                   profiles={profiles}
-                  onCopy={(msg) => pushToast('success', msg)}
-                  onCopyFail={(msg) => pushToast('warning', msg)}
+                  onCopy={(msg) => pushToast("success", msg)}
+                  onCopyFail={(msg) => pushToast("warning", msg)}
                 />
               )}
             </div>
@@ -222,7 +240,7 @@ export default function ResetPasswordPage() {
             <label className="block text-sm font-semibold text-sky-900 mb-1">Mật khẩu mới</label>
             <div className="flex gap-2">
               <input
-                type={showPwd ? 'text' : 'password'}
+                type={showPwd ? "text" : "password"}
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 className="flex-1 px-3 py-2 rounded-lg border border-sky-300 bg-white text-sm focus:ring-2 focus:ring-sky-400"
@@ -233,7 +251,7 @@ export default function ResetPasswordPage() {
                 onClick={() => setShowPwd((v) => !v)}
                 className="px-3 py-2 rounded-lg border border-sky-300 bg-sky-50 hover:bg-sky-100 text-sky-800"
               >
-                {showPwd ? 'Ẩn' : 'Hiện'}
+                {showPwd ? "Ẩn" : "Hiện"}
               </button>
             </div>
             <PasswordStrength pwdMeta={pwdMeta} />
@@ -247,7 +265,7 @@ export default function ResetPasswordPage() {
             disabled={loading}
             className="px-4 py-2 rounded-lg bg-sky-700 text-white font-semibold hover:bg-sky-800 transition disabled:bg-sky-300"
           >
-            {loading ? 'Đang đổi…' : 'Đổi mật khẩu'}
+            {loading ? "Đang đổi…" : "Đổi mật khẩu"}
           </button>
         </div>
       </form>
@@ -287,9 +305,9 @@ function SelectedUserInfo({
             onClick={async () => {
               try {
                 await navigator.clipboard.writeText(cur.user_id);
-                onCopy('Đã copy user_id vào clipboard.');
+                onCopy("Đã copy user_id vào clipboard.");
               } catch {
-                onCopyFail('Không thể copy, vui lòng chọn & Ctrl+C.');
+                onCopyFail("Không thể copy, vui lòng chọn & Ctrl+C.");
               }
             }}
             className="text-xs px-2 py-[2px] rounded border border-sky-200 bg-white hover:border-sky-400"
@@ -312,27 +330,27 @@ function PasswordStrength({ pwdMeta }: { pwdMeta: ReturnType<typeof assessPasswo
         <span className="text-sky-700/70">Tiêu chí: độ dài, chữ hoa, chữ thường, số, ký tự đặc biệt</span>
       </div>
       <div className="h-2 w-full rounded bg-sky-100 overflow-hidden flex">
-        <div className={`${pwdMeta.score >= 1 ? 'bg-rose-400' : 'bg-sky-100'} flex-1`} />
-        <div className={`${pwdMeta.score >= 2 ? 'bg-amber-400' : 'bg-sky-100'} flex-1`} />
-        <div className={`${pwdMeta.score >= 3 ? 'bg-sky-500' : 'bg-sky-100'} flex-1`} />
-        <div className={`${pwdMeta.score >= 4 ? 'bg-emerald-500' : 'bg-sky-100'} flex-1`} />
-        <div className={`${pwdMeta.score >= 5 ? 'bg-emerald-700' : 'bg-sky-100'} flex-1`} />
+        <div className={`${pwdMeta.score >= 1 ? "bg-rose-400" : "bg-sky-100"} flex-1`} />
+        <div className={`${pwdMeta.score >= 2 ? "bg-amber-400" : "bg-sky-100"} flex-1`} />
+        <div className={`${pwdMeta.score >= 3 ? "bg-sky-500" : "bg-sky-100"} flex-1`} />
+        <div className={`${pwdMeta.score >= 4 ? "bg-emerald-500" : "bg-sky-100"} flex-1`} />
+        <div className={`${pwdMeta.score >= 5 ? "bg-emerald-700" : "bg-sky-100"} flex-1`} />
       </div>
       <ul className="mt-2 grid grid-cols-2 gap-1 text-xs">
-        <li className={`flex items-center gap-2 ${pwdMeta.checks.len ? 'text-emerald-700' : 'text-sky-700/70'}`}>
-          {pwdMeta.checks.len ? '✓' : '•'} ≥ 8 ký tự
+        <li className={`flex items-center gap-2 ${pwdMeta.checks.len ? "text-emerald-700" : "text-sky-700/70"}`}>
+          {pwdMeta.checks.len ? "✓" : "•"} ≥ 8 ký tự
         </li>
-        <li className={`flex items-center gap-2 ${pwdMeta.checks.upper ? 'text-emerald-700' : 'text-sky-700/70'}`}>
-          {pwdMeta.checks.upper ? '✓' : '•'} Có chữ hoa
+        <li className={`flex items-center gap-2 ${pwdMeta.checks.upper ? "text-emerald-700" : "text-sky-700/70"}`}>
+          {pwdMeta.checks.upper ? "✓" : "•"} Có chữ hoa
         </li>
-        <li className={`flex items-center gap-2 ${pwdMeta.checks.lower ? 'text-emerald-700' : 'text-sky-700/70'}`}>
-          {pwdMeta.checks.lower ? '✓' : '•'} Có chữ thường
+        <li className={`flex items-center gap-2 ${pwdMeta.checks.lower ? "text-emerald-700" : "text-sky-700/70"}`}>
+          {pwdMeta.checks.lower ? "✓" : "•"} Có chữ thường
         </li>
-        <li className={`flex items-center gap-2 ${pwdMeta.checks.digit ? 'text-emerald-700' : 'text-sky-700/70'}`}>
-          {pwdMeta.checks.digit ? '✓' : '•'} Có số
+        <li className={`flex items-center gap-2 ${pwdMeta.checks.digit ? "text-emerald-700" : "text-sky-700/70"}`}>
+          {pwdMeta.checks.digit ? "✓" : "•"} Có số
         </li>
-        <li className={`flex items-center gap-2 ${pwdMeta.checks.special ? 'text-emerald-700' : 'text-sky-700/70'}`}>
-          {pwdMeta.checks.special ? '✓' : '•'} Có ký tự đặc biệt
+        <li className={`flex items-center gap-2 ${pwdMeta.checks.special ? "text-emerald-700" : "text-sky-700/70"}`}>
+          {pwdMeta.checks.special ? "✓" : "•"} Có ký tự đặc biệt
         </li>
       </ul>
     </div>

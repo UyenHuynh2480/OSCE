@@ -10,11 +10,18 @@ type CohortRow = {
   id: string;
   year: number;
   level_id?: string;
-  levels?: { name: string } | null; // đổi 'levels' theo tên relationship của bạn: levels / level
+  levels?: { name: string }[] | { name: string } | null; // có thể là mảng hoặc object tùy relationship/view
 };
 
 type SortBy = "year" | "level";
 type SortDir = "asc" | "desc";
+
+/** Helper: lấy tên level từ field levels (mảng hoặc object hoặc null) */
+function getLevelName(levels: CohortRow["levels"]): string {
+  if (Array.isArray(levels)) return levels[0]?.name ?? "";
+  if (levels && typeof levels === "object") return (levels as { name: string }).name ?? "";
+  return "";
+}
 
 export default function ManageCohorts() {
   const [cohorts, setCohorts] = useState<CohortRow[]>([]);
@@ -184,7 +191,7 @@ export default function ManageCohorts() {
     const q = keyword.trim().toLowerCase();
     if (!q) return cohorts;
     return cohorts.filter((c) => {
-      const lvl = c.levels?.name ?? "";
+      const lvl = getLevelName(c.levels);
       return String(c.year).includes(q) || lvl.toLowerCase().includes(q);
     });
   }, [cohorts, keyword]);
@@ -197,8 +204,8 @@ export default function ManageCohorts() {
       if (sortBy === "year") {
         cmp = a.year - b.year;
       } else {
-        const an = (a.levels?.name ?? "").toLocaleLowerCase();
-        const bn = (b.levels?.name ?? "").toLocaleLowerCase();
+        const an = getLevelName(a.levels).toLocaleLowerCase();
+        const bn = getLevelName(b.levels).toLocaleLowerCase();
         cmp = an.localeCompare(bn, "vi");
       }
       return sortDir === "asc" ? cmp : -cmp;
@@ -369,7 +376,9 @@ export default function ManageCohorts() {
                 displayRows.map((c) => (
                   <tr key={c.id} className="hover:bg-sky-50 transition-colors">
                     <td className="px-4 py-2 font-medium text-sky-900">{c.year}</td>
-                    <td className="px-4 py-2">{c.levels?.name ?? "-"}</td>
+                    <td className="px-4 py-2">
+                      {getLevelName(c.levels) || "-"}
+                    </td>
                     <td className="px-4 py-2">
                       <div className="flex items-center gap-2">
                         <button

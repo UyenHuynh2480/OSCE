@@ -5,6 +5,19 @@ import { supabaseAdmin } from '@/lib/supabaseServerAdmin';
 
 export const runtime = 'nodejs';
 
+// Kiểu phần tử sẽ upsert lên bảng students (chỉ những trường đang dùng)
+type StudentUpsert = {
+  student_code: string;
+  last_name: string;
+  name: string;
+  birth_year: number;
+  gender: string;
+  level_id: string | null | undefined;
+  cohort_id: string | null | undefined;
+  group_number: number;
+  batch_number: number;
+};
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -27,8 +40,8 @@ export async function POST(req: NextRequest) {
     const levelMapByName = new Map((levels as any[]).map((l: any) => [String(l.name).trim(), l.id]));
     const cohortMap = new Map((cohorts as any[]).map((c: any) => [`${c.year}-${c.level_id}`, c.id]));
 
-    // Chuẩn hoá dữ liệu sẽ upsert
-    const inserts = rows.map((r: any) => {
+    // Chuẩn hoá dữ liệu sẽ upsert (định kiểu rõ ràng)
+    const inserts: StudentUpsert[] = rows.map((r: any): StudentUpsert => {
       const level_id = levelMapByName.get(String(r.level_name ?? '').trim());
       const cohort_id = cohortMap.get(`${r.year}-${level_id}`);
       return {
@@ -46,16 +59,16 @@ export async function POST(req: NextRequest) {
 
     // Kiểm tra sơ bộ
     const invalid = inserts.filter(
-      (x) =>
+      (x: StudentUpsert) =>
         !x.student_code ||
         !x.last_name ||
         !x.name ||
-        !x.birth_year ||
+        !x.birth_year ||     // 0 sẽ bị coi là không hợp lệ; nếu muốn cho phép 0, chỉnh lại điều kiện
         !x.gender ||
         !x.level_id ||
         !x.cohort_id ||
-        !x.group_number ||
-        !x.batch_number
+        !x.group_number ||   // 0 sẽ bị coi là không hợp lệ
+        !x.batch_number      // 0 sẽ bị coi là không hợp lệ
     );
     if (invalid.length) {
       return NextResponse.json(
@@ -72,9 +85,10 @@ export async function POST(req: NextRequest) {
       const { error } = await supabaseAdmin
         .from('students')
         .upsert(chunk, { onConflict: 'student_code' });
+
       if (error) {
         return NextResponse.json(
-          { error: `Lỗi upsert chunk ${i / CHUNK_SIZE + 1}: ${error.message}` },
+          { error: `Lỗi upsert chunk ${Math.floor(i / CHUNK_SIZE) + 1}: ${error.message}` },
           { status: 500 }
         );
       }
